@@ -84,6 +84,8 @@ class Broker:
         """
         direction: "CALL" or "PUT"
         Returns (success: bool, order_id_or_reason)
+
+        Uses digital spot (OTC Blitz) — binary options are no longer available.
         """
         pair = pair or config.PAIR
         amount = amount or config.TRADE_AMOUNT
@@ -92,21 +94,11 @@ class Broker:
 
         self.ensure_connected()
 
-        # Try binary/turbo first, fall back to digital spot if unavailable —
-        # different iqoptionapi forks expose these slightly differently.
-        try:
-            check, order_id = self.api.buy(amount, pair, action, expiration_minutes)
-            if check:
-                return True, order_id
-            return False, f"buy() returned False: {order_id}"
-        except Exception as e:
-            log.warning("Classic buy() failed (%s), trying digital spot...", e)
-
-        try:
-            check, order_id = self.api.buy_digital_spot(pair, amount, action, expiration_minutes)
-            return check, order_id
-        except Exception as e:
-            return False, f"digital spot buy failed: {e}"
+        # Digital spot (OTC Blitz) — binary buy() is unavailable on IQ Option.
+        check, order_id = self.api.buy_digital_spot(pair, amount, action, expiration_minutes)
+        if check:
+            return True, order_id
+        return False, f"digital spot buy failed: {order_id}"
 
     def get_trade_result(self, order_id, timeout=5):
         """Best-effort win/loss/draw check. Returns 'win', 'loss', 'draw', 'unknown'."""
