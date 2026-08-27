@@ -114,8 +114,6 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <div class="control-row" style="margin-top:10px">
       <span style="color:#888;font-size:13px">Pairs:</span>
       <div id="pair-list" class="pair-list"></div>
-      <input type="text" id="new-pair" placeholder="e.g. GBPUSD-OTC" class="pair-input">
-      <button id="btn-add-pair" class="btn btn-small">+ Add</button>
     </div>
     <div class="control-row" style="margin-top:10px">
       <span style="color:#888;font-size:13px">Account:</span>
@@ -179,6 +177,20 @@ let currentRunning = true;
 let signalEngineData = {};
 let currentAccountType = 'PRACTICE';
 let currentTradeAmount = 1;
+
+var PAIR_FLAGS = {
+  'EURUSD-OTC': '\u{1F1EA}\u{1F1FA} \u{1F1FA}\u{1F1F8}',
+  'GBPUSD-OTC': '\u{1F1EC}\u{1F1E7} \u{1F1FA}\u{1F1F8}',
+  'USDJPY-OTC': '\u{1F1FA}\u{1F1F8} \u{1F1EF}\u{1F1F5}',
+  'AUDUSD-OTC': '\u{1F1E6}\u{1F1FA} \u{1F1FA}\u{1F1F8}',
+  'USDCAD-OTC': '\u{1F1FA}\u{1F1F8} \u{1F1E8}\u{1F1E6}',
+  'EURGBP-OTC': '\u{1F1EA}\u{1F1FA} \u{1F1EC}\u{1F1E7}',
+  'EURJPY-OTC': '\u{1F1EA}\u{1F1FA} \u{1F1EF}\u{1F1F5}',
+  'NZDUSD-OTC': '\u{1F1F3}\u{1F1FF} \u{1F1FA}\u{1F1F8}',
+  'USDCHF-OTC': '\u{1F1FA}\u{1F1F8} \u{1F1E8}\u{1F1ED}',
+  'EURCAD-OTC': '\u{1F1EA}\u{1F1FA} \u{1F1E8}\u{1F1E6}'
+};
+function pairFlag(p) { return PAIR_FLAGS[p] || '\u{1F30D}'; }
 
 function initCharts() {
   signalChart = new Chart(document.getElementById('signalChart'), {
@@ -393,20 +405,6 @@ document.getElementById('btn-toggle').onclick = function() {
   currentRunning = !currentRunning;
   sendControl();
 };
-
-document.getElementById('btn-add-pair').onclick = function() {
-  var input = document.getElementById('new-pair');
-  var pair = input.value.trim().toUpperCase();
-  if (pair && currentPairs.indexOf(pair) === -1) {
-    currentPairs.push(pair);
-    input.value = '';
-    sendControl();
-  }
-};
-
-document.getElementById('new-pair').addEventListener('keydown', function(e) {
-  if (e.key === 'Enter') document.getElementById('btn-add-pair').click();
-});
 
 document.getElementById('btn-account').onclick = function() {
   currentAccountType = currentAccountType === 'PRACTICE' ? 'REAL' : 'PRACTICE';
