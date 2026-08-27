@@ -39,6 +39,8 @@ PAIR = PAIRS[0] if PAIRS else "EURUSD-OTC"  # backward compat
 TIMEFRAME_SECONDS = _get_int("TIMEFRAME_SECONDS", 60)       # 1m entry candles
 CANDLE_COUNT = _get_int("CANDLE_COUNT", 100)
 EXPIRATION_MINUTES = _get_int("EXPIRATION_MINUTES", 1)    # trade expiry
+USE_BLITZ = _get_bool("USE_BLITZ", True)                 # use blitz (short-expiry) options
+BLITZ_EXPIRATION_SECONDS = _get_int("BLITZ_EXPIRATION_SECONDS", 30)  # blitz expiry in seconds
 
 # --- Higher timeframe for trend analysis (1h) ---
 HIGHER_TIMEFRAME_SECONDS = _get_int("HIGHER_TIMEFRAME_SECONDS", 3600)  # 1h

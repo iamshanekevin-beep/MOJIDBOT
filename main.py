@@ -78,7 +78,10 @@ class TradeTracker:
     def check_completed(self, broker):
         completed = []
         still_pending = []
-        min_wait = config.EXPIRATION_MINUTES * 60 + 5
+        if config.USE_BLITZ:
+            min_wait = config.BLITZ_EXPIRATION_SECONDS + 5
+        else:
+            min_wait = config.EXPIRATION_MINUTES * 60 + 5
         max_wait = min_wait + 120
 
         for t in self.pending:

@@ -187,6 +187,85 @@ class Broker:
         df = df.sort_values("timestamp").reset_index(drop=True)
         return df
 
+    def buy_blitz(self, direction, amount, pair):
+        """
+        Place a blitz option (short-expiry, option_type_id=12).
+        Uses websocket version 2.0 with expiration in seconds.
+        Returns (success: bool, order_id_or_reason).
+        """
+        import iqoptionapi.global_value as global_value
+        from iqoptionapi.stable_api import OP_code
+
+        active_id = OP_code.ACTIVES.get(pair)
+        if active_id is None:
+            return False, f"unknown active: {pair}"
+
+        self.ensure_connected()
+
+        # Current price (cotation) — needed for blitz v2.0 body
+        raw = self.api.get_candles(pair, 5, 1, time.time())
+        if not raw:
+            return False, "no candle data for blitz"
+        current_price = raw[-1]["close"]
+
+        # Profit percent from commission data (server expects integer, e.g. 83)
+        profit_pct = 87  # fallback
+        try:
+            all_profit = self.api.get_all_profit()
+            if pair in all_profit:
+                profit_pct = int(all_profit[pair].get("turbo", 0.87) * 100)
+        except Exception:
+            pass
+
+        exp_seconds = config.BLITZ_EXPIRATION_SECONDS
+        server_ts = self.api.api.timesync.server_timestamp
+        expired = int(server_ts + exp_seconds)
+
+        req_id = "buyblitz"
+        self.api.api.buy_multi_option = {}
+        self.api.api.buy_successful = None
+        try:
+            self.api.api.buy_multi_option[req_id] = {}
+        except Exception:
+            pass
+
+        data = {
+            "name": "binary-options.open-option",
+            "version": "2.0",
+            "body": {
+                "user_balance_id": int(global_value.balance_id),
+                "active_id": active_id,
+                "option_type_id": 12,
+                "direction": direction.lower(),
+                "expired": expired,
+                "refund_value": 0,
+                "price": float(amount),
+                "value": current_price,
+                "profit_percent": profit_pct,
+                "expiration_size": exp_seconds,
+            },
+        }
+        self.api.api.send_websocket_request("sendMessage", data, req_id)
+
+        # Wait for response (5s timeout)
+        start = time.time()
+        order_id = None
+        while time.time() - start < 5:
+            try:
+                entry = self.api.api.buy_multi_option.get(req_id, {})
+                if "message" in entry:
+                    return False, entry["message"]
+                if "id" in entry and entry["id"] is not None:
+                    order_id = entry["id"]
+                    break
+            except Exception:
+                pass
+            time.sleep(0.1)
+
+        if order_id is not None:
+            return True, order_id
+        return False, "blitz buy timeout"
+
     def place_trade(self, direction: str, amount=None, pair=None, expiration_minutes=None):
         """
         direction: "CALL" or "PUT"
@@ -194,12 +273,16 @@ class Broker:
         """
         pair = pair or config.PAIR
         amount = amount or config.TRADE_AMOUNT
-        expiration_minutes = expiration_minutes or config.EXPIRATION_MINUTES
         action = "call" if direction == "CALL" else "put"
 
         self.ensure_connected()
 
+        # Blitz options (short expiry in seconds)
+        if config.USE_BLITZ:
+            return self.buy_blitz(direction, amount, pair)
+
         # Binary/turbo buy() — works for most OTC pairs.
+        expiration_minutes = expiration_minutes or config.EXPIRATION_MINUTES
         check, order_id = self.api.buy(amount, pair, action, expiration_minutes)
         if check:
             return True, order_id
