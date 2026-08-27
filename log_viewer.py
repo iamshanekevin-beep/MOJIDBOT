@@ -182,8 +182,6 @@ var PAIR_FLAGS = {
   'EURUSD-OTC': '\u{1F1EA}\u{1F1FA} \u{1F1FA}\u{1F1F8}',
   'GBPUSD-OTC': '\u{1F1EC}\u{1F1E7} \u{1F1FA}\u{1F1F8}',
   'USDJPY-OTC': '\u{1F1FA}\u{1F1F8} \u{1F1EF}\u{1F1F5}',
-  'AUDUSD-OTC': '\u{1F1E6}\u{1F1FA} \u{1F1FA}\u{1F1F8}',
-  'USDCAD-OTC': '\u{1F1FA}\u{1F1F8} \u{1F1E8}\u{1F1E6}',
   'EURGBP-OTC': '\u{1F1EA}\u{1F1FA} \u{1F1EC}\u{1F1E7}',
   'EURJPY-OTC': '\u{1F1EA}\u{1F1FA} \u{1F1EF}\u{1F1F5}',
   'NZDUSD-OTC': '\u{1F1F3}\u{1F1FF} \u{1F1FA}\u{1F1F8}',
