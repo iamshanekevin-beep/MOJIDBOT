@@ -222,6 +222,7 @@ class Metrics:
             "strategy": self.strategy,
             "auto_trade": self.auto_trade,
             "account_type": self.account_type,
+            "trade_amount": self.trade_amount,
             "max_consecutive_losses": self.max_consecutive_losses,
             "total_cycles": self.total_cycles,
             "total_signals": self.total_signals,
