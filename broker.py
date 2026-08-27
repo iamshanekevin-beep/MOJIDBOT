@@ -2,11 +2,12 @@
 Wrapper around the unofficial IQ Option API.
 
 IQ Option has no official public API. This uses the community library
-'iqoptionapi'. That library is maintained outside of IQ Option and can
-break when IQ Option changes their backend — if connect() or fetch/trade
-calls start failing, this is the file to check/patch first.
+'iqoptionapi'. That library can break when IQ Option changes their backend.
 
-Install: pip install iqoptionapi
+Key fix: the library's get_candles() has an infinite while-True loop that
+calls its own broken self.connect() when the websocket dies, hanging forever.
+We monkey-patch it to return None on failure so the broker can force a clean
+reconnect (new IQ_Option object).
 """
 import logging
 import time
@@ -30,8 +31,33 @@ class Broker:
             raise ConnectionError(f"IQ Option login failed: {reason}")
 
         self.api.change_balance(config.ACCOUNT_TYPE)  # "PRACTICE" or "REAL"
+        self._patch_get_candles()
         log.info("Connected to IQ Option (%s account)", config.ACCOUNT_TYPE)
         return True
+
+    def _patch_get_candles(self):
+        """Monkey-patch the library's get_candles to remove its infinite while-True loop.
+
+        The original hangs forever calling its own broken self.connect() when the
+        websocket dies.  This version tries once, waits up to 5s for data, and
+        returns None on failure — so get_candles_df can force a clean reconnect.
+        """
+        from iqoptionapi.stable_api import OP_code
+        iq = self.api  # the IQ_Option instance
+
+        def safe_get_candles(ACTIVES, interval, count, endtime):
+            try:
+                iq.api.candles.candles_data = None
+                iq.api.getcandles(OP_code.ACTIVES[ACTIVES], interval, count, endtime)
+                for _ in range(50):  # wait up to 5 seconds
+                    if iq.api.candles.candles_data is not None:
+                        return iq.api.candles.candles_data
+                    time.sleep(0.1)
+                return None  # timeout — websocket likely dead
+            except Exception:
+                return None
+
+        iq.get_candles = safe_get_candles
 
     def ensure_connected(self):
         if self.api is None or not self.api.check_connect():
@@ -45,6 +71,8 @@ class Broker:
 
         self.ensure_connected()
         raw = self.api.get_candles(pair, timeframe_seconds, count, time.time())
+        if raw is None:
+            return pd.DataFrame()
         df = pd.DataFrame(raw)
         # iqoptionapi candle dicts typically have: open, close, min, max, from
         df = df.rename(columns={"min": "low", "max": "high", "from": "timestamp"})

@@ -6,6 +6,7 @@ Main bot loop — 24/7 multi-pair trading with:
   - Non-blocking trade tracking (scans all pairs while trades are pending)
   - Dashboard control via /logs/control.json (pause/resume + pair list)
   - No daily trade limit
+  - Per-pair failure tracking: invalid pairs auto-disabled, not retried
 """
 import json
 import logging
@@ -135,6 +136,10 @@ def main():
     risk = RiskState()
     tracker = TradeTracker()
     last_candle_ts = {}
+    trend_cache = {}        # {pair: {"trend": str, "updated_at": float}}
+    pair_fail_count = {}   # {pair: consecutive failures}
+    pair_disabled = {}      # {pair: cycles remaining disabled}
+    TREND_CACHE_TTL = 300   # refresh 1h trend every 5 min
 
     # Connect to IQ Option
     while True:
@@ -186,17 +191,36 @@ def main():
                 continue
 
             # ── Scan all pairs ──
+            cycle_failures = 0
             for pair in pairs:
                 try:
-                    # Get 1h trend
-                    df_1h = broker.get_candles_df(
-                        pair=pair,
-                        timeframe_seconds=config.HIGHER_TIMEFRAME_SECONDS,
-                        count=config.HIGHER_TIMEFRAME_CANDLES,
-                    )
-                    if df_1h.empty:
+                    # Skip disabled pairs (failed too many times)
+                    if pair_disabled.get(pair, 0) > 0:
+                        pair_disabled[pair] -= 1
                         continue
-                    trend, trend_info = strategy.get_trend(df_1h)
+
+                    # Get 1h trend (cached — refresh every 5 min to reduce API load)
+                    cached = trend_cache.get(pair)
+                    if cached and time.time() - cached["updated_at"] < TREND_CACHE_TTL:
+                        trend = cached["trend"]
+                    else:
+                        df_1h = broker.get_candles_df(
+                            pair=pair,
+                            timeframe_seconds=config.HIGHER_TIMEFRAME_SECONDS,
+                            count=config.HIGHER_TIMEFRAME_CANDLES,
+                        )
+                        if df_1h.empty:
+                            pair_fail_count[pair] = pair_fail_count.get(pair, 0) + 1
+                            cycle_failures += 1
+                            if pair_fail_count[pair] >= 3:
+                                log.warning("[%s] Failed %d times — disabling for 10 cycles",
+                                             pair, pair_fail_count[pair])
+                                pair_disabled[pair] = 10
+                                pair_fail_count[pair] = 0
+                            continue
+                        trend, _ = strategy.get_trend(df_1h)
+                        trend_cache[pair] = {"trend": trend, "updated_at": time.time()}
+                        pair_fail_count[pair] = 0  # reset on success
 
                     # Get 1m candles
                     df = broker.get_candles_df(
@@ -205,7 +229,15 @@ def main():
                         count=config.CANDLE_COUNT,
                     )
                     if df.empty:
+                        pair_fail_count[pair] = pair_fail_count.get(pair, 0) + 1
+                        cycle_failures += 1
+                        if pair_fail_count[pair] >= 3:
+                            log.warning("[%s] Failed %d times — disabling for 10 cycles",
+                                         pair, pair_fail_count[pair])
+                            pair_disabled[pair] = 10
+                            pair_fail_count[pair] = 0
                         continue
+                    pair_fail_count[pair] = 0  # reset on success
 
                     latest_ts = df["timestamp"].iloc[-1]
                     if latest_ts == last_candle_ts.get(pair):
@@ -265,6 +297,12 @@ def main():
 
                 except Exception as e:
                     log.error("[%s] Error: %s", pair, e)
+                time.sleep(1)  # avoid overwhelming the API between pairs
+
+            # If all pairs failed this cycle, force a reconnect
+            if cycle_failures > 0 and cycle_failures >= len(pairs):
+                log.warning("All pairs failed — forcing reconnect")
+                broker.connect()
 
             time.sleep(config.POLL_SECONDS)
 
