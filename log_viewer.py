@@ -179,16 +179,16 @@ let currentAccountType = 'PRACTICE';
 let currentTradeAmount = 1;
 
 var PAIR_FLAGS = {
-  'EURUSD-OTC': '\u{1F1EA}\u{1F1FA}\u{1F1FA}\u{1F1F8}',
-  'GBPUSD-OTC': '\u{1F1EC}\u{1F1E7}\u{1F1FA}\u{1F1F8}',
-  'USDJPY-OTC': '\u{1F1FA}\u{1F1F8}\u{1F1EF}\u{1F1F5}',
-  'EURGBP-OTC': '\u{1F1EA}\u{1F1FA}\u{1F1EC}\u{1F1E7}',
-  'EURJPY-OTC': '\u{1F1EA}\u{1F1FA}\u{1F1EF}\u{1F1F5}',
-  'NZDUSD-OTC': '\u{1F1F3}\u{1F1FF}\u{1F1FA}\u{1F1F8}',
-  'USDCHF-OTC': '\u{1F1FA}\u{1F1F8}\u{1F1E8}\u{1F1ED}',
-  'EURCAD-OTC': '\u{1F1EA}\u{1F1FA}\u{1F1E8}\u{1F1E6}'
+  'EURUSD-OTC': String.fromCodePoint(0x1F1EA,0x1F1FA) + String.fromCodePoint(0x1F1FA,0x1F1F8),
+  'GBPUSD-OTC': String.fromCodePoint(0x1F1EC,0x1F1E7) + String.fromCodePoint(0x1F1FA,0x1F1F8),
+  'USDJPY-OTC': String.fromCodePoint(0x1F1FA,0x1F1F8) + String.fromCodePoint(0x1F1EF,0x1F1F5),
+  'EURGBP-OTC': String.fromCodePoint(0x1F1EA,0x1F1FA) + String.fromCodePoint(0x1F1EC,0x1F1E7),
+  'EURJPY-OTC': String.fromCodePoint(0x1F1EA,0x1F1FA) + String.fromCodePoint(0x1F1EF,0x1F1F5),
+  'NZDUSD-OTC': String.fromCodePoint(0x1F1F3,0x1F1FF) + String.fromCodePoint(0x1F1FA,0x1F1F8),
+  'USDCHF-OTC': String.fromCodePoint(0x1F1FA,0x1F1F8) + String.fromCodePoint(0x1F1E8,0x1F1ED),
+  'EURCAD-OTC': String.fromCodePoint(0x1F1EA,0x1F1FA) + String.fromCodePoint(0x1F1E8,0x1F1E6)
 };
-function pairFlag(p) { return PAIR_FLAGS[p] || '\u{1F30D}'; }
+function pairFlag(p) { return PAIR_FLAGS[p] || String.fromCodePoint(0x1F30D); }
 function pairLabel(p) {
   var base = p.replace(/-OTC$/i, '');
   if (base.length === 6) return base.slice(0,3) + '/' + base.slice(3);
