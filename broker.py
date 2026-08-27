@@ -31,33 +31,140 @@ class Broker:
             raise ConnectionError(f"IQ Option login failed: {reason}")
 
         self.api.change_balance(config.ACCOUNT_TYPE)  # "PRACTICE" or "REAL"
-        self._patch_get_candles()
+        self._patch_api()
         log.info("Connected to IQ Option (%s account)", config.ACCOUNT_TYPE)
         return True
 
-    def _patch_get_candles(self):
-        """Monkey-patch the library's get_candles to remove its infinite while-True loop.
+    def _patch_api(self):
+        """Monkey-patch the library to remove infinite while-True blocking loops.
 
-        The original hangs forever calling its own broken self.connect() when the
-        websocket dies.  This version tries once, waits up to 5s for data, and
-        returns None on failure — so get_candles_df can force a clean reconnect.
+        get_candles, buy_digital_spot, and check_win_digital_v2 all have
+        unbounded `while x == None: pass` loops that hang forever when the
+        websocket is unresponsive.  Each is replaced with a timeout-bounded version.
         """
         from iqoptionapi.stable_api import OP_code
-        iq = self.api  # the IQ_Option instance
+        from datetime import datetime, timedelta
+        from iqoptionapi.expiration import get_expiration_time
+        import logging as _logging
+        iq = self.api
 
+        # --- get_candles: 5s timeout ---
         def safe_get_candles(ACTIVES, interval, count, endtime):
             try:
                 iq.api.candles.candles_data = None
                 iq.api.getcandles(OP_code.ACTIVES[ACTIVES], interval, count, endtime)
-                for _ in range(50):  # wait up to 5 seconds
+                for _ in range(50):
                     if iq.api.candles.candles_data is not None:
                         return iq.api.candles.candles_data
                     time.sleep(0.1)
-                return None  # timeout — websocket likely dead
+                return None
             except Exception:
                 return None
 
+        # --- buy_digital_spot: 10s timeout ---
+        def safe_buy_digital_spot(active, amount, action, duration):
+            if action == 'put':
+                action = 'P'
+            elif action == 'call':
+                action = 'C'
+            else:
+                _logging.error('buy_digital_spot action error')
+                return False, "invalid action"
+
+            timestamp = int(iq.api.timesync.server_timestamp)
+            if duration == 1:
+                exp, _ = get_expiration_time(timestamp, duration)
+            else:
+                now_date = datetime.fromtimestamp(timestamp) + timedelta(minutes=1, seconds=30)
+                while True:
+                    if now_date.minute % duration == 0 and time.mktime(now_date.timetuple()) - timestamp > 30:
+                        break
+                    now_date = now_date + timedelta(minutes=1)
+                exp = time.mktime(now_date.timetuple())
+
+            date_formated = str(datetime.utcfromtimestamp(exp).strftime("%Y%m%d%H%M"))
+            instrument_id = "do" + active + date_formated + "PT" + str(duration) + "M" + action + "SPT"
+            iq.api.digital_option_placed_id = None
+            iq.api.place_digital_option(instrument_id, amount)
+
+            for _ in range(100):  # 10s timeout
+                if iq.api.digital_option_placed_id is not None:
+                    break
+                time.sleep(0.1)
+
+            if isinstance(iq.api.digital_option_placed_id, int):
+                return True, iq.api.digital_option_placed_id
+            return False, iq.api.digital_option_placed_id or "timeout"
+
+        # --- check_win_digital_v2: 120s timeout ---
+        def safe_check_win_digital_v2(buy_order_id):
+            for _ in range(1200):  # 120s timeout
+                try:
+                    order = iq.get_async_order(buy_order_id)
+                    if order and order.get("position-changed") != {}:
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.1)
+            else:
+                return False, None  # timeout — trade still pending
+
+            try:
+                order_data = iq.get_async_order(buy_order_id)["position-changed"]["msg"]
+            except Exception:
+                return False, None
+
+            if order_data is not None:
+                if order_data.get("status") == "closed":
+                    if order_data.get("close_reason") == "expired":
+                        return True, order_data["close_profit"] - order_data["invest"]
+                    elif order_data.get("close_reason") == "default":
+                        return True, order_data["pnl_realized"]
+                else:
+                    return False, None
+            return False, None
+
+        # --- get_betinfo: 10s timeout (no infinite reconnect loop) ---
+        def safe_get_betinfo(id_number):
+            iq.api.game_betinfo.isSuccessful = None
+            start = time.time()
+            try:
+                iq.api.get_betinfo(id_number)
+            except Exception:
+                return False, None
+            while time.time() - start < 10:
+                if iq.api.game_betinfo.isSuccessful is not None:
+                    if iq.api.game_betinfo.isSuccessful:
+                        return True, iq.api.game_betinfo.dict
+                    return False, None
+                time.sleep(0.5)
+            return False, None  # timeout
+
+        # --- check_win_v2: 60s timeout (binary trade result check) ---
+        def safe_check_win_v2(id_number, polling_time=1):
+            deadline = time.time() + 60
+            while time.time() < deadline:
+                try:
+                    check, data = iq.get_betinfo(id_number)
+                    if check and data:
+                        win = data["result"]["data"][str(id_number)]["win"]
+                        if win != "":
+                            try:
+                                profit = (data["result"]["data"][str(id_number)]["profit"]
+                                          - data["result"]["data"][str(id_number)]["deposit"])
+                                return profit
+                            except (KeyError, TypeError):
+                                pass
+                except Exception:
+                    pass
+                time.sleep(polling_time)
+            return None  # timeout
+
         iq.get_candles = safe_get_candles
+        iq.buy_digital_spot = safe_buy_digital_spot
+        iq.check_win_digital_v2 = safe_check_win_digital_v2
+        iq.check_win_v2 = safe_check_win_v2
+        iq.get_betinfo = safe_get_betinfo
 
     def ensure_connected(self):
         if self.api is None or not self.api.check_connect():
@@ -84,8 +191,6 @@ class Broker:
         """
         direction: "CALL" or "PUT"
         Returns (success: bool, order_id_or_reason)
-
-        Uses digital spot (OTC Blitz) — binary options are no longer available.
         """
         pair = pair or config.PAIR
         amount = amount or config.TRADE_AMOUNT
@@ -94,24 +199,24 @@ class Broker:
 
         self.ensure_connected()
 
-        # Digital spot (OTC Blitz) — binary buy() is unavailable on IQ Option.
-        check, order_id = self.api.buy_digital_spot(pair, amount, action, expiration_minutes)
+        # Binary/turbo buy() — works for most OTC pairs.
+        check, order_id = self.api.buy(amount, pair, action, expiration_minutes)
         if check:
             return True, order_id
-        return False, f"digital spot buy failed: {order_id}"
+        log.warning("buy() failed for %s: %s", pair, order_id)
+        return False, str(order_id)
 
     def get_trade_result(self, order_id, timeout=5):
-        """Best-effort win/loss/draw check. Returns 'win', 'loss', 'draw', 'unknown'."""
+        """Check binary trade result. Returns 'win', 'loss', 'draw', 'unknown'."""
         try:
-            result = self.api.check_win_v4(order_id) if hasattr(self.api, "check_win_v4") else None
-            if result is None:
+            profit = self.api.check_win_v2(order_id, 2)
+            if profit is None:
                 return "unknown"
-            profit, status = result if isinstance(result, tuple) else (result, None)
-            if profit is not None and profit > 0:
+            if profit > 0:
                 return "win"
-            if profit is not None and profit < 0:
+            if profit < 0:
                 return "loss"
-            return "unknown"
+            return "draw"
         except Exception as e:
             log.warning("Could not fetch trade result: %s", e)
             return "unknown"
