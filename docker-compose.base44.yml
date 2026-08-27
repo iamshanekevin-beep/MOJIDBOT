@@ -21,6 +21,7 @@ services:
       - "3000:3000"
     environment:
       - BOT_LOG_FILE=/logs/bot.log
+      - BOT_CONTROL_FILE=/logs/control.json
     command: python -u log_viewer.py
     restart: unless-stopped
     depends_on:

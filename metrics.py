@@ -25,11 +25,14 @@ class Metrics:
     def _init(self):
         self.started_at = datetime.now(timezone.utc).isoformat()
         self.status = "starting"
+        self.running = True
+        self.cooldown = False
+        self.pending_trades = 0
         self.pair = ""
+        self.pairs = []
         self.strategy = ""
         self.auto_trade = False
         self.account_type = ""
-        self.max_trades_per_day = 0
         self.max_consecutive_losses = 0
         self.total_signals = 0
         self.call_signals = 0
@@ -39,18 +42,44 @@ class Metrics:
         self.wins = 0
         self.losses = 0
         self.unknown_results = 0
-        self.pnl_today = 0.0
-        self.trades_today = 0
+        self.pnl_total = 0.0
         self.consecutive_losses = 0
-        self.paused = False
         self.last_signal = None
         self.last_trade = None
         self.signal_history = []
         self.trade_history = []
+        self.pair_stats = {}
 
     @property
     def total_cycles(self):
         return self.total_signals + self.no_signal_count
+
+    # ─── Per-pair tracking ──────────────────────────────────────
+
+    def _ensure_pair(self, pair):
+        if pair not in self.pair_stats:
+            self.pair_stats[pair] = {"signals": 0, "trades": 0, "wins": 0, "losses": 0}
+
+    def record_pair_signal(self, pair, direction):
+        with self._lock:
+            self._ensure_pair(pair)
+            if direction is not None:
+                self.pair_stats[pair]["signals"] += 1
+
+    def record_pair_trade(self, pair):
+        with self._lock:
+            self._ensure_pair(pair)
+            self.pair_stats[pair]["trades"] += 1
+
+    def record_pair_result(self, pair, result):
+        with self._lock:
+            self._ensure_pair(pair)
+            if result == "win":
+                self.pair_stats[pair]["wins"] += 1
+            elif result == "loss":
+                self.pair_stats[pair]["losses"] += 1
+
+    # ─── Overall tracking ───────────────────────────────────────
 
     def record_signal(self, direction, info):
         with self._lock:
@@ -65,6 +94,7 @@ class Metrics:
 
             self.last_signal = {
                 "direction": direction or "NONE",
+                "pair": (info or {}).get("pair", ""),
                 "info": _safe_info(info),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
@@ -73,6 +103,7 @@ class Metrics:
                 self.signal_history.append({
                     "ts": datetime.now(timezone.utc).isoformat(),
                     "direction": direction,
+                    "pair": (info or {}).get("pair", ""),
                     "price": _extract_price(info),
                 })
                 if len(self.signal_history) > MAX_HISTORY:
@@ -80,16 +111,16 @@ class Metrics:
 
             self._write()
 
-    def record_trade(self, direction, amount, order_id, success):
+    def record_trade(self, direction, amount, order_id, success, pair=None):
         with self._lock:
             if success:
                 self.trades_placed += 1
-                self.trades_today += 1
             self.last_trade = {
                 "direction": direction,
                 "amount": amount,
                 "order_id": str(order_id),
                 "success": success,
+                "pair": pair or "",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
             self._write()
@@ -98,10 +129,10 @@ class Metrics:
         with self._lock:
             if result == "win":
                 self.wins += 1
-                self.pnl_today += amount * 0.8
+                self.pnl_total += amount * 0.8
             elif result == "loss":
                 self.losses += 1
-                self.pnl_today -= amount
+                self.pnl_total -= amount
             else:
                 self.unknown_results += 1
 
@@ -116,15 +147,36 @@ class Metrics:
 
     def update_risk(self, risk_state):
         with self._lock:
-            self.trades_today = risk_state.trades_today
             self.consecutive_losses = risk_state.consecutive_losses
-            self.pnl_today = round(risk_state.pnl_today, 2)
-            self.paused = risk_state.paused
+            self.pnl_total = round(risk_state.pnl_total, 2)
+            self.cooldown = risk_state.cooldown
             self._write()
+
+    # ─── State setters ──────────────────────────────────────────
 
     def set_status(self, status):
         with self._lock:
             self.status = status
+            self._write()
+
+    def set_running(self, running):
+        with self._lock:
+            self.running = running
+            self._write()
+
+    def set_cooldown(self, cooldown):
+        with self._lock:
+            self.cooldown = cooldown
+            self._write()
+
+    def set_pending_trades(self, count):
+        with self._lock:
+            self.pending_trades = count
+            self._write()
+
+    def set_pairs(self, pairs):
+        with self._lock:
+            self.pairs = list(pairs)
             self._write()
 
     def set_config(self, **kwargs):
@@ -147,11 +199,14 @@ class Metrics:
             "started_at": self.started_at,
             "last_update": datetime.now(timezone.utc).isoformat(),
             "status": self.status,
+            "running": self.running,
+            "cooldown": self.cooldown,
+            "pending_trades": self.pending_trades,
             "pair": self.pair,
+            "pairs": self.pairs,
             "strategy": self.strategy,
             "auto_trade": self.auto_trade,
             "account_type": self.account_type,
-            "max_trades_per_day": self.max_trades_per_day,
             "max_consecutive_losses": self.max_consecutive_losses,
             "total_cycles": self.total_cycles,
             "total_signals": self.total_signals,
@@ -162,44 +217,36 @@ class Metrics:
             "wins": self.wins,
             "losses": self.losses,
             "unknown_results": self.unknown_results,
-            "pnl_today": round(self.pnl_today, 2),
-            "trades_today": self.trades_today,
+            "pnl_total": round(self.pnl_total, 2),
             "consecutive_losses": self.consecutive_losses,
-            "paused": self.paused,
             "last_signal": self.last_signal,
             "last_trade": self.last_trade,
             "signal_history": self.signal_history,
             "trade_history": self.trade_history,
+            "pair_stats": self.pair_stats,
         }
 
 
-# Module-level singleton for easy access from main.py
+# ─── Module-level singleton wrappers ──────────────────────────────
+
 _instance = Metrics()
 
-
-def set_config(**kwargs):
-    _instance.set_config(**kwargs)
-
-
-def set_status(status):
-    _instance.set_status(status)
-
-
-def record_signal(direction, info):
-    _instance.record_signal(direction, info)
-
-
-def record_trade(direction, amount, order_id, success):
-    _instance.record_trade(direction, amount, order_id, success)
+def set_config(**kwargs):       _instance.set_config(**kwargs)
+def set_status(status):         _instance.set_status(status)
+def set_running(running):       _instance.set_running(running)
+def set_cooldown(cooldown):     _instance.set_cooldown(cooldown)
+def set_pending_trades(count):  _instance.set_pending_trades(count)
+def set_pairs(pairs):           _instance.set_pairs(pairs)
+def record_signal(d, info):     _instance.record_signal(d, info)
+def record_trade(d, a, oid, s, pair=None): _instance.record_trade(d, a, oid, s, pair)
+def record_result(r, a):        _instance.record_result(r, a)
+def update_risk(rs):            _instance.update_risk(rs)
+def record_pair_signal(p, d):   _instance.record_pair_signal(p, d)
+def record_pair_trade(p):      _instance.record_pair_trade(p)
+def record_pair_result(p, r):   _instance.record_pair_result(p, r)
 
 
-def record_result(result, amount):
-    _instance.record_result(result, amount)
-
-
-def update_risk(risk_state):
-    _instance.update_risk(risk_state)
-
+# ─── Helpers ──────────────────────────────────────────────────────
 
 def _safe_info(info):
     if not isinstance(info, dict):
