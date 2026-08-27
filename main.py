@@ -76,6 +76,7 @@ def main():
             log.error("Connection failed (%s). Retrying in 15s...", e)
             time.sleep(15)
 
+    log.info("Trading pair: %s", broker.get_active_pair())
     last_candle_ts = None
 
     while True:

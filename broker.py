@@ -22,6 +22,8 @@ log = logging.getLogger("broker")
 class Broker:
     def __init__(self):
         self.api = None
+        self.open_assets = set()
+        self.active_pair = None
 
     def connect(self):
         self.api = IQ_Option(config.IQ_EMAIL, config.IQ_PASSWORD)
@@ -31,15 +33,52 @@ class Broker:
 
         self.api.change_balance(config.ACCOUNT_TYPE)  # "PRACTICE" or "REAL"
         log.info("Connected to IQ Option (%s account)", config.ACCOUNT_TYPE)
+
+        # Fetch the list of currently-open assets ONCE and cache it, then
+        # resolve which pair to trade: keep the configured PAIR when it is
+        # open, otherwise auto-switch to the first available pair.
+        self._fetch_open_assets()
+        self.active_pair = self._resolve_pair()
         return True
+
+    def _fetch_open_assets(self):
+        """Query IQ Option once for which assets are open (not suspended)."""
+        self.open_assets = set()
+        try:
+            open_time = self.api.get_all_open_time()
+            # open_time is keyed by instrument type -> asset name -> {"open": bool}
+            for option in ("binary", "turbo"):
+                for name, info in open_time.get(option, {}).items():
+                    if info.get("open"):
+                        self.open_assets.add(name)
+            log.info("Found %d open assets (binary/turbo).", len(self.open_assets))
+        except Exception as e:
+            log.warning("Could not fetch open-asset list (%s). "
+                        "Will fall back to the configured pair.", e)
+
+    def _resolve_pair(self):
+        """Use the configured PAIR if open, else the first available asset."""
+        pair = config.PAIR
+        if pair in self.open_assets:
+            return pair
+        if self.open_assets:
+            chosen = sorted(self.open_assets)[0]
+            log.warning("Configured pair %s is suspended/unavailable — "
+                        "switching to available pair %s.", pair, chosen)
+            return chosen
+        log.warning("No open assets found — falling back to configured pair %s.", pair)
+        return pair
+
+    def get_active_pair(self):
+        return self.active_pair or config.PAIR
 
     def ensure_connected(self):
         if self.api is None or not self.api.check_connect():
-            log.warning("Not connected — reconnecting...")
+            log.warning("Connection dropped — reconnecting...")
             self.connect()
 
     def get_candles_df(self, pair=None, timeframe_seconds=None, count=None) -> pd.DataFrame:
-        pair = pair or config.PAIR
+        pair = pair or self.get_active_pair()
         timeframe_seconds = timeframe_seconds or config.TIMEFRAME_SECONDS
         count = count or config.CANDLE_COUNT
 
@@ -57,7 +96,7 @@ class Broker:
         direction: "CALL" or "PUT"
         Returns (success: bool, order_id_or_reason)
         """
-        pair = pair or config.PAIR
+        pair = pair or self.get_active_pair()
         amount = amount or config.TRADE_AMOUNT
         expiration_minutes = expiration_minutes or config.EXPIRATION_MINUTES
         action = "call" if direction == "CALL" else "put"
