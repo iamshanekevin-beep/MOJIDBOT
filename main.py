@@ -352,7 +352,7 @@ def main():
 
                 except Exception as e:
                     log.error("[%s] Error: %s", pair, e)
-                time.sleep(1)  # avoid overwhelming the API between pairs
+                time.sleep(0.3)  # avoid overwhelming the API between pairs
 
             # If all pairs failed this cycle, force a reconnect
             if cycle_failures > 0 and cycle_failures >= len(pairs):

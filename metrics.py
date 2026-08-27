@@ -143,7 +143,7 @@ class Metrics:
                     self.placed_trades = self.placed_trades[-MAX_HISTORY:]
             self._write()
 
-    def record_result(self, result, amount, pair=None, direction=None):
+    def record_result(self, result, amount, pair=None, direction=None, order_id=None):
         with self._lock:
             if result == "win":
                 self.wins += 1
@@ -163,6 +163,8 @@ class Metrics:
                 entry["pair"] = pair
             if direction:
                 entry["direction"] = direction
+            if order_id:
+                entry["order_id"] = str(order_id)
             self.trade_history.append(entry)
             if len(self.trade_history) > MAX_HISTORY:
                 self.trade_history = self.trade_history[-MAX_HISTORY:]

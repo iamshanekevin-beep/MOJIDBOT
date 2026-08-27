@@ -48,12 +48,24 @@ class Broker:
         import logging as _logging
         iq = self.api
 
-        # --- get_candles: 5s timeout ---
+        # --- get_candles: 5s timeout (threaded to avoid blocking on dead websocket) ---
+        import threading as _threading
+
         def safe_get_candles(ACTIVES, interval, count, endtime):
             try:
                 iq.api.candles.candles_data = None
-                iq.api.getcandles(OP_code.ACTIVES[ACTIVES], interval, count, endtime)
-                for _ in range(50):
+
+                def _send():
+                    try:
+                        iq.api.getcandles(OP_code.ACTIVES[ACTIVES], interval, count, endtime)
+                    except Exception:
+                        pass
+
+                t = _threading.Thread(target=_send, daemon=True)
+                t.start()
+                t.join(timeout=3)  # don't let the send call block forever
+
+                for _ in range(30):
                     if iq.api.candles.candles_data is not None:
                         return iq.api.candles.candles_data
                     time.sleep(0.1)
