@@ -168,6 +168,13 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <div class="info-box"><h3>Last Trade</h3><div class="detail" id="last-trade">No trades yet</div></div>
   </div>
 
+  <div class="pair-stats" style="margin-bottom:16px;">
+    <h3>📋 Trade Results</h3>
+    <table><thead><tr><th>Pair</th><th>Direction</th><th>Result</th><th>Amount</th><th>Time</th></tr></thead>
+      <tbody id="trade-results-body"><tr><td colspan="5" style="color:#555">No trades yet</td></tr></tbody>
+    </table>
+  </div>
+
   <div class="logs-section"><h3>Live Logs</h3><pre id="logs">Loading...</pre></div>
 
 <script>
@@ -296,6 +303,20 @@ function updateMetrics(d) {
     const lt = d.last_trade;
     document.getElementById('last-trade').textContent =
       'Direction: ' + lt.direction + '\nPair: ' + (lt.pair||'—') + '\nAmount: ' + lt.amount + '\nOrder ID: ' + lt.order_id + '\nSuccess: ' + lt.success + '\nTime: ' + (lt.timestamp || '—');
+  }
+
+  // Trade results
+  if (d.trade_history && d.trade_history.length > 0) {
+    let rows = '';
+    for (const t of d.trade_history) {
+      const pair = t.pair || '—';
+      const dir = t.direction || '—';
+      const res = t.result || '—';
+      const resClass = res === 'win' ? 'green' : res === 'loss' ? 'red' : '';
+      const time = t.ts ? new Date(t.ts).toLocaleTimeString() : '—';
+      rows += '<tr><td>' + pairFlag(pair) + ' ' + pairLabel(pair) + '</td><td>' + dir + '</td><td class="' + resClass + '">' + res.toUpperCase() + '</td><td>' + (t.amount||0) + '</td><td>' + time + '</td></tr>';
+    }
+    document.getElementById('trade-results-body').innerHTML = rows;
   }
 
   // Per-pair stats

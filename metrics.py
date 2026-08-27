@@ -127,7 +127,7 @@ class Metrics:
             }
             self._write()
 
-    def record_result(self, result, amount):
+    def record_result(self, result, amount, pair=None, direction=None):
         with self._lock:
             if result == "win":
                 self.wins += 1
@@ -138,11 +138,16 @@ class Metrics:
             else:
                 self.unknown_results += 1
 
-            self.trade_history.append({
+            entry = {
                 "ts": datetime.now(timezone.utc).isoformat(),
                 "result": result,
                 "amount": amount,
-            })
+            }
+            if pair:
+                entry["pair"] = pair
+            if direction:
+                entry["direction"] = direction
+            self.trade_history.append(entry)
             if len(self.trade_history) > MAX_HISTORY:
                 self.trade_history = self.trade_history[-MAX_HISTORY:]
             self._write()
