@@ -109,7 +109,7 @@ class Broker:
             return False, f"digital spot buy failed: {e}"
 
     def get_trade_result(self, order_id, timeout=5):
-        """Best-effort win/loss check. Returns 'win', 'loss', 'unknown'."""
+        """Best-effort win/loss/draw check. Returns 'win', 'loss', 'draw', 'unknown'."""
         try:
             result = self.api.check_win_v4(order_id) if hasattr(self.api, "check_win_v4") else None
             if result is None:

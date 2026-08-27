@@ -47,6 +47,8 @@ class RiskState:
         elif result == "loss":
             self.consecutive_losses += 1
             self.pnl_total -= amount
+        elif result == "draw":
+            pass  # no P&L change, no streak impact
             if config.MAX_CONSECUTIVE_LOSSES > 0 and self.consecutive_losses >= config.MAX_CONSECUTIVE_LOSSES:
                 self.cooldown = True
                 log.warning("Entered cooldown after %d consecutive losses", self.consecutive_losses)

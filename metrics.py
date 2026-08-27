@@ -60,7 +60,7 @@ class Metrics:
 
     def _ensure_pair(self, pair):
         if pair not in self.pair_stats:
-            self.pair_stats[pair] = {"signals": 0, "trades": 0, "wins": 0, "losses": 0}
+            self.pair_stats[pair] = {"signals": 0, "trades": 0, "wins": 0, "losses": 0, "draws": 0}
 
     def record_pair_signal(self, pair, direction):
         with self._lock:
@@ -304,6 +304,11 @@ def _extract_price(info):
         for k in ("fcb", "pole_position"):
             if k in info and isinstance(info[k], dict) and "price" in info[k]:
                 p = info[k]["price"]
+                if isinstance(p, (int, float)):
+                    return p
+    return None
+eturn None
+["price"]
                 if isinstance(p, (int, float)):
                     return p
     return None

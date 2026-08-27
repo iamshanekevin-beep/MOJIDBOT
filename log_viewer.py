@@ -219,7 +219,7 @@ function initCharts() {
   });
   resultChart = new Chart(document.getElementById('resultChart'), {
     type: 'doughnut',
-    data: { labels: ['Wins','Losses','Unknown'], datasets: [{ data: [0,0,0], backgroundColor: ['#4CAF50','#ff6b6b','#555'], borderWidth: 0 }] },
+    data: { labels: ['Wins','Losses','Draws','Unknown'], datasets: [{ data: [0,0,0,0], backgroundColor: ['#4CAF50','#ff6b6b','#ffd93d','#555'], borderWidth: 0 }] },
     options: { responsive: true, plugins: { legend: { labels: { color: '#888' } } } }
   });
 }
@@ -312,7 +312,7 @@ function updateMetrics(d) {
       const pair = t.pair || '—';
       const dir = t.direction || '—';
       const status = t.status || 'pending';
-      const statusClass = status === 'win' ? 'green' : status === 'loss' ? 'red' : 'yellow';
+      const statusClass = status === 'win' ? 'green' : status === 'loss' ? 'red' : status === 'draw' ? 'yellow' : 'yellow';
       const oid = t.order_id || '—';
       const time = t.ts ? new Date(t.ts).toLocaleTimeString() : '—';
       rows += '<tr><td>' + pairFlag(pair) + ' ' + pairLabel(pair) + '</td><td>' + dir + '</td><td>' + (t.amount||0) + '</td><td class="' + statusClass + '">' + status.toUpperCase() + '</td><td>' + oid + '</td><td>' + time + '</td></tr>';
