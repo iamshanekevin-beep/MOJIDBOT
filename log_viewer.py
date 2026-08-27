@@ -69,7 +69,21 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .logs-section { background:#1a1a2e; border:1px solid #2a2a4a; border-radius:12px; padding:16px; }
   .logs-section h3 { font-size:13px; color:#888; margin-bottom:10px; }
   #logs { background:#0f0f23; border:1px solid #2a2a4a; border-radius:8px; padding:12px; font-family:monospace; font-size:12px; max-height:250px; overflow-y:auto; white-space:pre-wrap; word-wrap:break-word; line-height:1.5; }
-  @media(max-width:768px) { .cards,.charts,.info-row { grid-template-columns:1fr; } }
+  .signal-engine { background:#1a1a2e; border:1px solid #2a2a4a; border-radius:12px; padding:16px; margin-bottom:16px; }
+  .signal-engine h3 { font-size:13px; color:#888; margin-bottom:12px; }
+  .engine-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:12px; }
+  .engine-card { background:#0f0f23; border:2px solid #2a2a4a; border-radius:10px; padding:16px; text-align:center; transition:border-color .3s,box-shadow .3s; }
+  .engine-card[data-state="CALL"] { border-color:#4CAF50; box-shadow:0 0 16px rgba(76,175,80,0.25); }
+  .engine-card[data-state="SELL"] { border-color:#ff6b6b; box-shadow:0 0 16px rgba(255,107,107,0.25); }
+  .engine-card[data-state="WAIT"] { border-color:#ffd93d; box-shadow:0 0 8px rgba(255,217,61,0.15); }
+  .engine-pair { font-size:13px; color:#888; margin-bottom:6px; }
+  .engine-state { font-size:36px; font-weight:800; margin-bottom:10px; letter-spacing:2px; }
+  .engine-state.call { color:#4CAF50; } .engine-state.sell { color:#ff6b6b; } .engine-state.wait { color:#ffd93d; }
+  .engine-timer-bar { height:8px; background:#2a2a4a; border-radius:4px; overflow:hidden; margin-bottom:8px; }
+  .engine-timer-fill { height:100%; background:linear-gradient(90deg,#61dafb,#4CAF50); transition:width .5s linear; border-radius:4px; }
+  .engine-info { display:flex; justify-content:space-between; font-size:11px; color:#888; }
+  .engine-countdown { color:#61dafb; font-weight:700; font-size:13px; }
+  @media(max-width:768px) { .cards,.charts,.info-row,.engine-grid { grid-template-columns:1fr; } }
 </style>
 </head>
 <body>
@@ -97,6 +111,12 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       <input type="text" id="new-pair" placeholder="e.g. GBPUSD-OTC" class="pair-input">
       <button id="btn-add-pair" class="btn btn-small">+ Add</button>
     </div>
+  </div>
+
+  <!-- Signal Engine -->
+  <div class="signal-engine">
+    <h3>🎯 Signal Engine — 1m Candle Timer</h3>
+    <div id="engine-grid" class="engine-grid"><div style="color:#555;text-align:center;padding:20px">Waiting for data...</div></div>
   </div>
 
   <div class="config-bar">
@@ -136,6 +156,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 let signalChart, resultChart;
 let currentPairs = [];
 let currentRunning = true;
+let signalEngineData = {};
 
 function initCharts() {
   signalChart = new Chart(document.getElementById('signalChart'), {
@@ -247,6 +268,59 @@ function updateMetrics(d) {
   // Result chart
   resultChart.data.datasets[0].data = [d.wins||0, d.losses||0, d.unknown_results||0];
   resultChart.update('none');
+
+  // Signal engine
+  updateSignalEngine(d);
+}
+
+function updateSignalEngine(d) {
+  signalEngineData = d.signal_engine || {};
+  renderEngineCards();
+}
+
+function renderEngineCards() {
+  const grid = document.getElementById('engine-grid');
+  const pairs = Object.keys(signalEngineData);
+  if (pairs.length === 0) {
+    grid.innerHTML = '<div style="color:#555;text-align:center;padding:20px">Waiting for data...</div>';
+    return;
+  }
+  let cards = '';
+  for (const pair of pairs) {
+    const eng = signalEngineData[pair];
+    const state = eng.state || 'WAIT';
+    const stateClass = state.toLowerCase();
+    cards += '<div class="engine-card" data-state="' + state + '" data-candle-close="' + (eng.candle_close||0) + '">' +
+      '<div class="engine-pair">' + pair + '</div>' +
+      '<div class="engine-state ' + stateClass + '">' + state + '</div>' +
+      '<div class="engine-timer-bar"><div class="engine-timer-fill" style="width:0%"></div></div>' +
+      '<div class="engine-info">' +
+        '<span>Price: ' + (eng.price ? eng.price.toFixed(5) : '—') + '</span>' +
+        '<span>1h: ' + (eng.trend_1h || '—') + '</span>' +
+        '<span class="engine-countdown">0:00</span>' +
+      '</div>' +
+    '</div>';
+  }
+  grid.innerHTML = cards;
+  updateCountdowns();
+}
+
+function updateCountdowns() {
+  const now = Math.floor(Date.now() / 1000);
+  document.querySelectorAll('.engine-card').forEach(function(card) {
+    const close = parseInt(card.dataset.candleClose || '0');
+    const remaining = Math.max(0, close - now);
+    const total = 60;
+    const elapsed = total - remaining;
+    const pct = Math.min(100, Math.max(0, (elapsed / total) * 100));
+    const fill = card.querySelector('.engine-timer-fill');
+    if (fill) fill.style.width = pct + '%';
+    const cd = card.querySelector('.engine-countdown');
+    if (cd) {
+      const secs = remaining % 60;
+      cd.textContent = '0:' + String(secs).padStart(2, '0');
+    }
+  });
 }
 
 function renderPairs() {
@@ -310,6 +384,7 @@ initCharts();
 fetchMetrics(); fetchLogs();
 setInterval(fetchMetrics, 3000);
 setInterval(fetchLogs, 3000);
+setInterval(updateCountdowns, 1000);
 </script>
 </body>
 </html>"""

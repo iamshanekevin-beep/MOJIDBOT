@@ -239,6 +239,22 @@ def main():
                         continue
                     pair_fail_count[pair] = 0  # reset on success
 
+                    # ── Signal engine: always compute & update display ──
+                    latest_row = df.iloc[-1]
+                    candle_open_ts = int(latest_row["timestamp"])
+                    candle_close_ts = candle_open_ts + config.TIMEFRAME_SECONDS
+                    current_price = float(latest_row["close"])
+                    eng_dir, eng_info = strategy.get_signal(df)
+                    if eng_dir is None:
+                        eng_state = "WAIT"
+                    elif eng_dir == "CALL":
+                        eng_state = "CALL"
+                    else:
+                        eng_state = "SELL"
+                    metrics.set_signal_engine(pair, eng_state, candle_open_ts,
+                                             candle_close_ts, current_price, trend, eng_dir)
+
+                    # ── Trade execution: only on new candle ──
                     latest_ts = df["timestamp"].iloc[-1]
                     if latest_ts == last_candle_ts.get(pair):
                         continue  # no new closed candle yet
@@ -251,8 +267,8 @@ def main():
                         metrics.record_pair_signal(pair, None)
                         continue
 
-                    # ── 1m signal ──
-                    direction, info = strategy.get_signal(df)
+                    # ── 1m signal (reuse engine computation) ──
+                    direction, info = eng_dir, eng_info
                     info["pair"] = pair
                     info["trend_1h"] = trend
                     metrics.record_signal(direction, info)

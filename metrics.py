@@ -49,6 +49,7 @@ class Metrics:
         self.signal_history = []
         self.trade_history = []
         self.pair_stats = {}
+        self.signal_engine = {}  # {pair: {state, candle_open, candle_close, price, trend_1h, direction}}
 
     @property
     def total_cycles(self):
@@ -179,6 +180,19 @@ class Metrics:
             self.pairs = list(pairs)
             self._write()
 
+    def set_signal_engine(self, pair, state, candle_open, candle_close, price, trend_1h, direction):
+        with self._lock:
+            self.signal_engine[pair] = {
+                "state": state,
+                "candle_open": candle_open,
+                "candle_close": candle_close,
+                "price": price,
+                "trend_1h": trend_1h,
+                "direction": direction,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            self._write()
+
     def set_config(self, **kwargs):
         with self._lock:
             for k, v in kwargs.items():
@@ -224,6 +238,7 @@ class Metrics:
             "signal_history": self.signal_history,
             "trade_history": self.trade_history,
             "pair_stats": self.pair_stats,
+            "signal_engine": self.signal_engine,
         }
 
 
@@ -244,6 +259,8 @@ def update_risk(rs):            _instance.update_risk(rs)
 def record_pair_signal(p, d):   _instance.record_pair_signal(p, d)
 def record_pair_trade(p):      _instance.record_pair_trade(p)
 def record_pair_result(p, r):   _instance.record_pair_result(p, r)
+def set_signal_engine(pair, state, candle_open, candle_close, price, trend_1h, direction):
+    _instance.set_signal_engine(pair, state, candle_open, candle_close, price, trend_1h, direction)
 
 
 # ─── Helpers ──────────────────────────────────────────────────────
