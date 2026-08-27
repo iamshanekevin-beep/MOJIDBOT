@@ -179,16 +179,21 @@ let currentAccountType = 'PRACTICE';
 let currentTradeAmount = 1;
 
 var PAIR_FLAGS = {
-  'EURUSD-OTC': '\u{1F1EA}\u{1F1FA} \u{1F1FA}\u{1F1F8}',
-  'GBPUSD-OTC': '\u{1F1EC}\u{1F1E7} \u{1F1FA}\u{1F1F8}',
-  'USDJPY-OTC': '\u{1F1FA}\u{1F1F8} \u{1F1EF}\u{1F1F5}',
-  'EURGBP-OTC': '\u{1F1EA}\u{1F1FA} \u{1F1EC}\u{1F1E7}',
-  'EURJPY-OTC': '\u{1F1EA}\u{1F1FA} \u{1F1EF}\u{1F1F5}',
-  'NZDUSD-OTC': '\u{1F1F3}\u{1F1FF} \u{1F1FA}\u{1F1F8}',
-  'USDCHF-OTC': '\u{1F1FA}\u{1F1F8} \u{1F1E8}\u{1F1ED}',
-  'EURCAD-OTC': '\u{1F1EA}\u{1F1FA} \u{1F1E8}\u{1F1E6}'
+  'EURUSD-OTC': '\u{1F1EA}\u{1F1FA}\u{1F1FA}\u{1F1F8}',
+  'GBPUSD-OTC': '\u{1F1EC}\u{1F1E7}\u{1F1FA}\u{1F1F8}',
+  'USDJPY-OTC': '\u{1F1FA}\u{1F1F8}\u{1F1EF}\u{1F1F5}',
+  'EURGBP-OTC': '\u{1F1EA}\u{1F1FA}\u{1F1EC}\u{1F1E7}',
+  'EURJPY-OTC': '\u{1F1EA}\u{1F1FA}\u{1F1EF}\u{1F1F5}',
+  'NZDUSD-OTC': '\u{1F1F3}\u{1F1FF}\u{1F1FA}\u{1F1F8}',
+  'USDCHF-OTC': '\u{1F1FA}\u{1F1F8}\u{1F1E8}\u{1F1ED}',
+  'EURCAD-OTC': '\u{1F1EA}\u{1F1FA}\u{1F1E8}\u{1F1E6}'
 };
 function pairFlag(p) { return PAIR_FLAGS[p] || '\u{1F30D}'; }
+function pairLabel(p) {
+  var base = p.replace(/-OTC$/i, '');
+  if (base.length === 6) return base.slice(0,3) + '/' + base.slice(3);
+  return p;
+}
 
 function initCharts() {
   signalChart = new Chart(document.getElementById('signalChart'), {
@@ -297,7 +302,7 @@ function updateMetrics(d) {
   if (d.pair_stats && Object.keys(d.pair_stats).length > 0) {
     let rows = '';
     for (const [pair, s] of Object.entries(d.pair_stats)) {
-      rows += '<tr><td>' + pairFlag(pair) + ' ' + pair + '</td><td>' + (s.signals||0) + '</td><td>' + (s.trades||0) + '</td><td>' + (s.wins||0) + '</td><td>' + (s.losses||0) + '</td></tr>';
+      rows += '<tr><td>' + pairFlag(pair) + ' ' + pairLabel(pair) + '</td><td>' + (s.signals||0) + '</td><td>' + (s.trades||0) + '</td><td>' + (s.wins||0) + '</td><td>' + (s.losses||0) + '</td></tr>';
     }
     document.getElementById('pair-stats-body').innerHTML = rows;
   }
