@@ -1,0 +1,17 @@
+{
+  "previewPort": 3000,
+  "healthPath": "/",
+  "startCommand": "docker compose -f docker-compose.base44.yml up -d",
+  "secrets": [
+    {
+      "name": "IQ_EMAIL",
+      "description": "Your IQ Option account email (login). Used by the bot to connect to IQ Option via the unofficial iqoptionapi library.",
+      "requiredAtBoot": true
+    },
+    {
+      "name": "IQ_PASSWORD",
+      "description": "Your IQ Option account password. Used together with IQ_EMAIL to authenticate.",
+      "requiredAtBoot": true
+    }
+  ]
+}

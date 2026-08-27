@@ -23,6 +23,7 @@ class Broker:
     def __init__(self):
         self.api = None
         self.open_assets = set()
+        self.actives_opcode = set()
         self.active_pair = None
 
     def connect(self):
@@ -42,31 +43,51 @@ class Broker:
         return True
 
     def _fetch_open_assets(self):
-        """Query IQ Option once for which assets are open (not suspended)."""
+        """Query IQ Option once for which binary/turbo assets are open (not suspended)."""
         self.open_assets = set()
         try:
-            open_time = self.api.get_all_open_time()
-            # open_time is keyed by instrument type -> asset name -> {"open": bool}
+            # get_all_init_v2() returns binary+turbo actives with enabled/is_suspended
+            # flags. We avoid get_all_open_time() here because it also pulls the
+            # digital list, which can stall ~30s and abort the whole call.
+            init = self.api.get_all_init_v2()
+            if not init:
+                log.warning("Open-asset list unavailable — falling back to configured pair.")
+                return
             for option in ("binary", "turbo"):
-                for name, info in open_time.get(option, {}).items():
-                    if info.get("open"):
-                        self.open_assets.add(name)
+                actives = init.get(option, {}).get("actives", {})
+                for active in actives.values():
+                    if active.get("enabled") and not active.get("is_suspended"):
+                        name = str(active.get("name", "")).split(".")[-1]
+                        if name:
+                            self.open_assets.add(name)
+            # Cache the opcode table (active name -> id) so we only ever hand
+            # get_candles() a pair it can actually resolve — handing it a name
+            # that is absent from this table makes it KeyError into an infinite
+            # "need reconnect" loop.
+            try:
+                self.actives_opcode = set(self.api.get_all_ACTIVES_OPCODE().keys())
+            except Exception:
+                self.actives_opcode = set()
             log.info("Found %d open assets (binary/turbo).", len(self.open_assets))
         except Exception as e:
             log.warning("Could not fetch open-asset list (%s). "
                         "Will fall back to the configured pair.", e)
 
     def _resolve_pair(self):
-        """Use the configured PAIR if open, else the first available asset."""
+        """Use the configured PAIR if open & tradeable, else an available tradeable pair."""
         pair = config.PAIR
-        if pair in self.open_assets:
+        # Only consider pairs the candle/trade calls can resolve (in the opcode
+        # table); otherwise get_candles() KeyErrors into an infinite reconnect loop.
+        usable = [p for p in sorted(self.open_assets)
+                  if not self.actives_opcode or p in self.actives_opcode]
+        if pair in self.open_assets and (not self.actives_opcode or pair in self.actives_opcode):
             return pair
-        if self.open_assets:
-            chosen = sorted(self.open_assets)[0]
+        if usable:
+            chosen = usable[0]
             log.warning("Configured pair %s is suspended/unavailable — "
                         "switching to available pair %s.", pair, chosen)
             return chosen
-        log.warning("No open assets found — falling back to configured pair %s.", pair)
+        log.warning("No tradeable open asset found — falling back to configured pair %s.", pair)
         return pair
 
     def get_active_pair(self):
