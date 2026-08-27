@@ -50,7 +50,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .btn-small:hover { background:#3a3a5a; }
   .pair-list { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
   .pair-tag { background:#2a2a4a; padding:4px 10px; border-radius:6px; font-size:13px; display:flex; align-items:center; gap:6px; }
-  .pair-tag .x { cursor:pointer; color:#ff6b6b; font-weight:bold; }
+  .pair-tag .flag { font-size:16px; line-height:1; }
   .pair-input { background:#0f0f23; border:1px solid #2a2a4a; color:#e0e0e0; padding:5px 10px; border-radius:6px; font-size:13px; width:140px; }
   .config-bar { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; font-size:13px; }
   .config-bar span { background:#1a1a2e; padding:6px 12px; border-radius:6px; border:1px solid #2a2a4a; }
@@ -299,7 +299,7 @@ function updateMetrics(d) {
   if (d.pair_stats && Object.keys(d.pair_stats).length > 0) {
     let rows = '';
     for (const [pair, s] of Object.entries(d.pair_stats)) {
-      rows += '<tr><td>' + pair + '</td><td>' + (s.signals||0) + '</td><td>' + (s.trades||0) + '</td><td>' + (s.wins||0) + '</td><td>' + (s.losses||0) + '</td></tr>';
+      rows += '<tr><td>' + pairFlag(pair) + ' ' + pair + '</td><td>' + (s.signals||0) + '</td><td>' + (s.trades||0) + '</td><td>' + (s.wins||0) + '</td><td>' + (s.losses||0) + '</td></tr>';
     }
     document.getElementById('pair-stats-body').innerHTML = rows;
   }
@@ -379,15 +379,8 @@ function updateCountdowns() {
 function renderPairs() {
   const el = document.getElementById('pair-list');
   el.innerHTML = currentPairs.map(function(p) {
-    return '<span class="pair-tag">' + p + ' <span class="x" data-pair="' + p + '">×</span></span>';
+    return '<span class="pair-tag"><span class="flag">' + pairFlag(p) + '</span> ' + p + '</span>';
   }).join('');
-  el.querySelectorAll('.x').forEach(function(x) {
-    x.onclick = function() {
-      var pair = this.getAttribute('data-pair');
-      currentPairs = currentPairs.filter(function(p) { return p !== pair; });
-      sendControl();
-    };
-  });
 }
 
 async function sendControl() {
