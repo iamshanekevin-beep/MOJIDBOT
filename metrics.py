@@ -125,6 +125,17 @@ class Metrics:
                 "pair": pair or "",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
+            if success:
+                self.placed_trades.append({
+                    "pair": pair or "",
+                    "direction": direction,
+                    "amount": amount,
+                    "order_id": str(order_id),
+                    "status": "pending",
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                })
+                if len(self.placed_trades) > MAX_HISTORY:
+                    self.placed_trades = self.placed_trades[-MAX_HISTORY:]
             self._write()
 
     def record_result(self, result, amount, pair=None, direction=None):
@@ -261,7 +272,7 @@ def set_pending_trades(count):  _instance.set_pending_trades(count)
 def set_pairs(pairs):           _instance.set_pairs(pairs)
 def record_signal(d, info):     _instance.record_signal(d, info)
 def record_trade(d, a, oid, s, pair=None): _instance.record_trade(d, a, oid, s, pair)
-def record_result(r, a):        _instance.record_result(r, a)
+def record_result(r, a, pair=None, direction=None, order_id=None): _instance.record_result(r, a, pair, direction, order_id)
 def update_risk(rs):            _instance.update_risk(rs)
 def record_pair_signal(p, d):   _instance.record_pair_signal(p, d)
 def record_pair_trade(p):      _instance.record_pair_trade(p)

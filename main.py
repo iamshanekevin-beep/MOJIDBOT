@@ -196,7 +196,7 @@ def main():
             completed = tracker.check_completed(broker)
             for trade, result in completed:
                 risk.record_result(result, trade["amount"])
-                metrics.record_result(result, trade["amount"], pair=trade["pair"], direction=trade["direction"])
+                metrics.record_result(result, trade["amount"], pair=trade["pair"], direction=trade["direction"], order_id=trade["order_id"])
                 metrics.record_pair_result(trade["pair"], result)
                 log.info("Trade result: %s pair=%s direction=%s | P&L: %.2f",
                          result, trade["pair"], trade["direction"], risk.pnl_total)

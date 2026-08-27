@@ -169,9 +169,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   </div>
 
   <div class="pair-stats" style="margin-bottom:16px;">
-    <h3>📋 Trade Results</h3>
-    <table><thead><tr><th>Pair</th><th>Direction</th><th>Result</th><th>Amount</th><th>Time</th></tr></thead>
-      <tbody id="trade-results-body"><tr><td colspan="5" style="color:#555">No trades yet</td></tr></tbody>
+    <h3>📋 Trade History</h3>
+    <table><thead><tr><th>Pair</th><th>Dir</th><th>Stake</th><th>Status</th><th>Order ID</th><th>Time</th></tr></thead>
+      <tbody id="trade-results-body"><tr><td colspan="6" style="color:#555">No trades yet</td></tr></tbody>
     </table>
   </div>
 
@@ -305,16 +305,17 @@ function updateMetrics(d) {
       'Direction: ' + lt.direction + '\nPair: ' + (lt.pair||'—') + '\nAmount: ' + lt.amount + '\nOrder ID: ' + lt.order_id + '\nSuccess: ' + lt.success + '\nTime: ' + (lt.timestamp || '—');
   }
 
-  // Trade results
-  if (d.trade_history && d.trade_history.length > 0) {
+  // Trade history
+  if (d.placed_trades && d.placed_trades.length > 0) {
     let rows = '';
-    for (const t of d.trade_history) {
+    for (const t of d.placed_trades) {
       const pair = t.pair || '—';
       const dir = t.direction || '—';
-      const res = t.result || '—';
-      const resClass = res === 'win' ? 'green' : res === 'loss' ? 'red' : '';
+      const status = t.status || 'pending';
+      const statusClass = status === 'win' ? 'green' : status === 'loss' ? 'red' : 'yellow';
+      const oid = t.order_id || '—';
       const time = t.ts ? new Date(t.ts).toLocaleTimeString() : '—';
-      rows += '<tr><td>' + pairFlag(pair) + ' ' + pairLabel(pair) + '</td><td>' + dir + '</td><td class="' + resClass + '">' + res.toUpperCase() + '</td><td>' + (t.amount||0) + '</td><td>' + time + '</td></tr>';
+      rows += '<tr><td>' + pairFlag(pair) + ' ' + pairLabel(pair) + '</td><td>' + dir + '</td><td>' + (t.amount||0) + '</td><td class="' + statusClass + '">' + status.toUpperCase() + '</td><td>' + oid + '</td><td>' + time + '</td></tr>';
     }
     document.getElementById('trade-results-body').innerHTML = rows;
   }
