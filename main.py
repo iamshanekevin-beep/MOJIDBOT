@@ -98,13 +98,18 @@ class TradeTracker:
 
 
 def read_control():
-    """Read control file → (running, pairs)."""
+    """Read control file → (running, pairs, account_type, trade_amount)."""
     try:
         with open(CONTROL_FILE, "r") as f:
             data = json.load(f)
-            return data.get("running", True), data.get("pairs", config.PAIRS)
+            return (
+                data.get("running", True),
+                data.get("pairs", config.PAIRS),
+                data.get("account_type", config.ACCOUNT_TYPE),
+                data.get("trade_amount", config.TRADE_AMOUNT),
+            )
     except (FileNotFoundError, json.JSONDecodeError):
-        return True, config.PAIRS
+        return True, config.PAIRS, config.ACCOUNT_TYPE, config.TRADE_AMOUNT
 
 
 def write_default_control():
@@ -113,7 +118,12 @@ def write_default_control():
         os.makedirs(os.path.dirname(CONTROL_FILE), exist_ok=True)
         if not os.path.exists(CONTROL_FILE):
             with open(CONTROL_FILE, "w") as f:
-                json.dump({"running": True, "pairs": config.PAIRS}, f, indent=2)
+                json.dump({
+                    "running": True,
+                    "pairs": config.PAIRS,
+                    "account_type": config.ACCOUNT_TYPE,
+                    "trade_amount": config.TRADE_AMOUNT,
+                }, f, indent=2)
     except Exception:
         pass
 
@@ -140,6 +150,7 @@ def main():
     pair_fail_count = {}   # {pair: consecutive failures}
     pair_disabled = {}      # {pair: cycles remaining disabled}
     TREND_CACHE_TTL = 300   # refresh 1h trend every 5 min
+    current_account_type = config.ACCOUNT_TYPE
 
     # Connect to IQ Option
     while True:
@@ -157,9 +168,22 @@ def main():
     while True:
         try:
             # ── Read control file ──
-            running, pairs = read_control()
+            running, pairs, account_type, trade_amount = read_control()
             metrics.set_running(running)
             metrics.set_pairs(pairs)
+
+            # ── Account type change → reconnect ──
+            if account_type != current_account_type:
+                log.info("Account type changed: %s → %s — reconnecting...",
+                         current_account_type, account_type)
+                config.ACCOUNT_TYPE = account_type
+                current_account_type = account_type
+                broker.connect()
+                metrics.set_config(account_type=account_type)
+
+            # ── Update trade amount ──
+            config.TRADE_AMOUNT = trade_amount
+            metrics.set_config(trade_amount=trade_amount)
 
             if not running:
                 metrics.set_status("paused")

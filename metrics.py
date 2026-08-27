@@ -33,6 +33,7 @@ class Metrics:
         self.strategy = ""
         self.auto_trade = False
         self.account_type = ""
+        self.trade_amount = 0.0
         self.max_consecutive_losses = 0
         self.total_signals = 0
         self.call_signals = 0

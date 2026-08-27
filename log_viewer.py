@@ -35,6 +35,12 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .badge { font-size:11px; padding:3px 8px; border-radius:6px; font-weight:600; }
   .badge-cooldown { background:#ff6b6b22; color:#ff6b6b; border:1px solid #ff6b6b44; }
   .badge-pending { background:#61dafb22; color:#61dafb; border:1px solid #61dafb44; }
+  .btn-account-practice { background:#61dafb; color:#0f0f23; }
+  .btn-account-real { background:#ff6b6b; color:#fff; }
+  .stake-options { display:flex; gap:6px; flex-wrap:wrap; }
+  .btn-stake { padding:5px 12px; border:1px solid #2a2a4a; border-radius:6px; background:#1a1a2e; color:#888; font-size:13px; cursor:pointer; font-weight:600; transition:all .15s; }
+  .btn-stake.active { background:#4CAF50; color:#fff; border-color:#4CAF50; }
+  .btn-stake:hover { background:#2a2a4a; }
   .controls { background:#1a1a2e; border:1px solid #2a2a4a; border-radius:12px; padding:16px; margin-bottom:16px; }
   .control-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
   .btn { padding:8px 16px; border:none; border-radius:8px; font-size:14px; font-weight:600; cursor:pointer; transition:all .15s; }
@@ -111,6 +117,19 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       <input type="text" id="new-pair" placeholder="e.g. GBPUSD-OTC" class="pair-input">
       <button id="btn-add-pair" class="btn btn-small">+ Add</button>
     </div>
+    <div class="control-row" style="margin-top:10px">
+      <span style="color:#888;font-size:13px">Account:</span>
+      <button id="btn-account" class="btn btn-account-practice">PRACTICE</button>
+      <span style="color:#888;font-size:13px;margin-left:16px">Stake:</span>
+      <div class="stake-options">
+        <button class="btn-stake" data-amount="1">1</button>
+        <button class="btn-stake" data-amount="5">5</button>
+        <button class="btn-stake" data-amount="10">10</button>
+        <button class="btn-stake" data-amount="25">25</button>
+        <button class="btn-stake" data-amount="50">50</button>
+        <button class="btn-stake" data-amount="100">100</button>
+      </div>
+    </div>
   </div>
 
   <!-- Signal Engine -->
@@ -124,6 +143,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <span>Auto Trade: <b id="cfg-autotrade">—</b></span>
     <span>Account: <b id="cfg-account">—</b></span>
     <span>Cons. Losses: <b id="cfg-cons-losses">0</b>/<span id="cfg-max-losses">—</span></span>
+    <span>Stake: <b id="cfg-stake">—</b></span>
   </div>
 
   <div class="cards">
@@ -157,6 +177,8 @@ let signalChart, resultChart;
 let currentPairs = [];
 let currentRunning = true;
 let signalEngineData = {};
+let currentAccountType = 'PRACTICE';
+let currentTradeAmount = 1;
 
 function initCharts() {
   signalChart = new Chart(document.getElementById('signalChart'), {
@@ -203,6 +225,25 @@ function updateMetrics(d) {
   document.getElementById('cfg-account').textContent = d.account_type || '—';
   document.getElementById('cfg-cons-losses').textContent = d.consecutive_losses || 0;
   document.getElementById('cfg-max-losses').textContent = d.max_consecutive_losses || '—';
+  document.getElementById('cfg-stake').textContent = d.trade_amount || '—';
+
+  // Account type switch
+  currentAccountType = d.account_type || 'PRACTICE';
+  var accBtn = document.getElementById('btn-account');
+  if (currentAccountType === 'REAL') {
+    accBtn.textContent = 'REAL';
+    accBtn.className = 'btn btn-account-real';
+  } else {
+    accBtn.textContent = 'PRACTICE';
+    accBtn.className = 'btn btn-account-practice';
+  }
+
+  // Stake amount
+  currentTradeAmount = d.trade_amount || 1;
+  document.querySelectorAll('.btn-stake').forEach(function(btn) {
+    if (parseFloat(btn.dataset.amount) === currentTradeAmount) btn.classList.add('active');
+    else btn.classList.remove('active');
+  });
 
   // Cards
   document.getElementById('m-cycles').textContent = d.total_cycles || 0;
@@ -342,7 +383,7 @@ async function sendControl() {
     await fetch('/api/control', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ running: currentRunning, pairs: currentPairs })
+      body: JSON.stringify({ running: currentRunning, pairs: currentPairs, account_type: currentAccountType, trade_amount: currentTradeAmount })
     });
     fetchMetrics();
   } catch(e) { console.error('control send failed', e); }
@@ -365,6 +406,18 @@ document.getElementById('btn-add-pair').onclick = function() {
 
 document.getElementById('new-pair').addEventListener('keydown', function(e) {
   if (e.key === 'Enter') document.getElementById('btn-add-pair').click();
+});
+
+document.getElementById('btn-account').onclick = function() {
+  currentAccountType = currentAccountType === 'PRACTICE' ? 'REAL' : 'PRACTICE';
+  sendControl();
+};
+
+document.querySelectorAll('.btn-stake').forEach(function(btn) {
+  btn.onclick = function() {
+    currentTradeAmount = parseFloat(this.dataset.amount);
+    sendControl();
+  };
 });
 
 async function fetchMetrics() {
