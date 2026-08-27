@@ -3,6 +3,7 @@ import time
 from datetime import datetime, timezone
 
 import config
+import metrics
 import strategy
 from broker import Broker
 
@@ -60,6 +61,11 @@ class RiskState:
 def main():
     log.info("Starting bot | pair=%s strategy=%s auto_trade=%s account=%s",
               config.PAIR, config.STRATEGY, config.AUTO_TRADE, config.ACCOUNT_TYPE)
+    metrics.set_config(pair=config.PAIR, strategy=config.STRATEGY,
+                       auto_trade=config.AUTO_TRADE, account_type=config.ACCOUNT_TYPE,
+                       max_trades_per_day=config.MAX_TRADES_PER_DAY,
+                       max_consecutive_losses=config.MAX_CONSECUTIVE_LOSSES)
+    metrics.set_status("connecting")
 
     if not config.IQ_EMAIL or not config.IQ_PASSWORD:
         log.error("IQ_EMAIL / IQ_PASSWORD are not set. Set them in Railway's Variables tab.")
@@ -71,6 +77,7 @@ def main():
     while True:
         try:
             broker.connect()
+            metrics.set_status("connected")
             break
         except Exception as e:
             log.error("Connection failed (%s). Retrying in 15s...", e)
@@ -93,6 +100,7 @@ def main():
             last_candle_ts = latest_ts
 
             direction, info = strategy.get_signal(df)
+            metrics.record_signal(direction, info)
 
             if direction is None:
                 log.info("No signal. %s", _summarize(info))
@@ -107,6 +115,7 @@ def main():
                 continue
 
             can_trade, reason = risk.can_trade()
+            metrics.update_risk(risk)
             if not can_trade:
                 log.warning("Trade skipped — risk control: %s", reason)
                 time.sleep(config.POLL_SECONDS)
@@ -114,6 +123,7 @@ def main():
 
             success, order_id = broker.place_trade(direction)
             risk.record_trade(config.TRADE_AMOUNT)
+            metrics.record_trade(direction, config.TRADE_AMOUNT, order_id, success)
 
             if not success:
                 log.error("Trade failed: %s", order_id)
@@ -126,6 +136,8 @@ def main():
             time.sleep(config.EXPIRATION_MINUTES * 60 + 5)
             result = broker.get_trade_result(order_id)
             risk.record_result(result, config.TRADE_AMOUNT)
+            metrics.record_result(result, config.TRADE_AMOUNT)
+            metrics.update_risk(risk)
             log.info("Trade result: %s | daily P&L (approx): %.2f", result, risk.pnl_today)
 
         except (ConnectionError, Exception) as e:
@@ -133,7 +145,9 @@ def main():
             time.sleep(15)
             try:
                 broker.connect()
+                metrics.set_status("connected")
             except Exception as e2:
+                metrics.set_status("error")
                 log.error("Reconnect failed: %s", e2)
 
 
