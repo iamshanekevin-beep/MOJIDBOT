@@ -19,7 +19,7 @@ services:
       - /run/base44/app.env
     environment:
       - PYTHONPATH=/deps
-    command: python -u main.py 2>&1 | tee /logs/bot.log
+    command: sh bot_runner.sh
     restart: unless-stopped
     depends_on:
       setup:
