@@ -302,8 +302,17 @@ def main():
                     metrics.record_pair_signal(pair, direction)
 
                     if direction is None:
-                        log.info("[%s] No signal. trend_1h=%s", pair, trend)
-                        continue
+                        # ── Clean breakout fallback: auto-execute breakout signals ──
+                        for bd in ("CALL", "PUT"):
+                            if strategy.is_clean_breakout(df, bd):
+                                direction = bd
+                                info["reason"] = "clean_breakout"
+                                log.info("[%s] Clean breakout signal: %s | trend_1h=%s",
+                                         pair, direction, trend)
+                                break
+                        if direction is None:
+                            log.info("[%s] No signal. trend_1h=%s", pair, trend)
+                            continue
 
                     # ── Trend alignment: 1m signal must match 1h trend ──
                     if trend is not None and direction != trend:
