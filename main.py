@@ -129,13 +129,19 @@ def main():
             risk.record_result(result, config.TRADE_AMOUNT)
             log.info("Trade result: %s | daily P&L (approx): %.2f", result, risk.pnl_today)
 
-        except (ConnectionError, Exception) as e:
+        except Exception as e:
             log.error("Error in main loop: %s. Reconnecting in 15s...", e)
             time.sleep(15)
-            try:
-                broker.connect()
-            except Exception as e2:
-                log.error("Reconnect failed: %s", e2)
+            # Retry reconnect until it succeeds — don't return to the main
+            # loop with a broken connection.
+            while True:
+                try:
+                    broker.api = None  # discard the dead websocket
+                    broker.connect()
+                    break
+                except Exception as e2:
+                    log.error("Reconnect failed: %s. Retrying in 30s...", e2)
+                    time.sleep(30)
 
 
 def _summarize(info):
