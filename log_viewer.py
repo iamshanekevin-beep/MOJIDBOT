@@ -94,7 +94,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 </head>
 <body>
   <div class="header">
-    <h1>🤖 IQ Option Trading Bot</h1>
+    <h1>🤖 MOJIDTRADEBOT</h1>
     <div class="header-right">
       <div class="status-badge">
         <div class="dot starting" id="status-dot"></div>
