@@ -68,7 +68,7 @@ POLE_POSITION_SCORE_THRESHOLD = _get_int("POLE_POSITION_SCORE_THRESHOLD", 3)
 
 # --- Risk / money management ---
 TRADE_AMOUNT = _get_float("TRADE_AMOUNT", 1.0)
-MAX_CONSECUTIVE_LOSSES = _get_int("MAX_CONSECUTIVE_LOSSES", 3)   # cooldown after this many losses in a row
+MAX_CONSECUTIVE_LOSSES = _get_int("MAX_CONSECUTIVE_LOSSES", 0)   # 0 = disabled (no cooldown/gale)
 MAX_TRADES_PER_DAY = _get_int("MAX_TRADES_PER_DAY", 0)           # 0 = unlimited, 24/7
 DAILY_LOSS_LIMIT = _get_float("DAILY_LOSS_LIMIT", 0)             # 0 = no limit
 
