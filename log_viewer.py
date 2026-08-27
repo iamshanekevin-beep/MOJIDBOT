@@ -156,6 +156,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <div class="chart-box"><h3>Trade Results</h3><canvas id="resultChart" height="100"></canvas></div>
   </div>
 
+  <div class="chart-box" style="margin-bottom:16px"><h3>💰 Balance Over Time</h3><canvas id="balanceChart" height="80"></canvas></div>
+
   <div class="pair-stats">
     <h3>Per-Pair Stats</h3>
     <table><thead><tr><th>Pair</th><th>Signals</th><th>Trades</th><th>Wins</th><th>Losses</th></tr></thead>

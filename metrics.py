@@ -42,6 +42,7 @@ class Metrics:
         self.trades_placed = 0
         self.wins = 0
         self.losses = 0
+        self.draws = 0
         self.unknown_results = 0
         self.pnl_total = 0.0
         self.consecutive_losses = 0
@@ -49,6 +50,8 @@ class Metrics:
         self.last_trade = None
         self.signal_history = []
         self.trade_history = []
+        self.placed_trades = []
+        self.balance_history = []
         self.pair_stats = {}
         self.signal_engine = {}  # {pair: {state, candle_open, candle_close, price, trend_1h, direction}}
 
@@ -80,6 +83,8 @@ class Metrics:
                 self.pair_stats[pair]["wins"] += 1
             elif result == "loss":
                 self.pair_stats[pair]["losses"] += 1
+            elif result == "draw":
+                self.pair_stats[pair]["draws"] += 1
 
     # ─── Overall tracking ───────────────────────────────────────
 
@@ -248,6 +253,7 @@ class Metrics:
             "trades_placed": self.trades_placed,
             "wins": self.wins,
             "losses": self.losses,
+            "draws": self.draws,
             "unknown_results": self.unknown_results,
             "pnl_total": round(self.pnl_total, 2),
             "consecutive_losses": self.consecutive_losses,
@@ -255,6 +261,8 @@ class Metrics:
             "last_trade": self.last_trade,
             "signal_history": self.signal_history,
             "trade_history": self.trade_history,
+            "placed_trades": self.placed_trades,
+            "balance_history": self.balance_history,
             "pair_stats": self.pair_stats,
             "signal_engine": self.signal_engine,
         }
@@ -307,8 +315,4 @@ def _extract_price(info):
                 if isinstance(p, (int, float)):
                     return p
     return None
-eturn None
-["price"]
-                if isinstance(p, (int, float)):
-                    return p
-    return None
+
