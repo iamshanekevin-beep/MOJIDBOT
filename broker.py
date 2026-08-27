@@ -96,15 +96,31 @@ class Broker:
     def ensure_connected(self):
         if self.api is None or not self.api.check_connect():
             log.warning("Connection dropped — reconnecting...")
-            self.connect()
+            self._reconnect()
+
+    def _reconnect(self):
+        """Discard the dead websocket and create a fresh connection."""
+        self.api = None
+        self.connect()
+
+    def _call_with_retry(self, fn, *args, **kwargs):
+        """Call an IQ Option API method; on connection failure, reconnect and retry once."""
+        try:
+            self.ensure_connected()
+            return fn(*args, **kwargs)
+        except Exception as e:
+            log.warning("API call failed (%s) — reconnecting and retrying...", e)
+            self._reconnect()
+            return fn(*args, **kwargs)
 
     def get_candles_df(self, pair=None, timeframe_seconds=None, count=None) -> pd.DataFrame:
         pair = pair or self.get_active_pair()
         timeframe_seconds = timeframe_seconds or config.TIMEFRAME_SECONDS
         count = count or config.CANDLE_COUNT
 
-        self.ensure_connected()
-        raw = self.api.get_candles(pair, timeframe_seconds, count, time.time())
+        raw = self._call_with_retry(
+            self.api.get_candles, pair, timeframe_seconds, count, time.time()
+        )
         df = pd.DataFrame(raw)
         # iqoptionapi candle dicts typically have: open, close, min, max, from
         df = df.rename(columns={"min": "low", "max": "high", "from": "timestamp"})
@@ -122,12 +138,12 @@ class Broker:
         expiration_minutes = expiration_minutes or config.EXPIRATION_MINUTES
         action = "call" if direction == "CALL" else "put"
 
-        self.ensure_connected()
-
         # Try binary/turbo first, fall back to digital spot if unavailable —
         # different iqoptionapi forks expose these slightly differently.
         try:
-            check, order_id = self.api.buy(amount, pair, action, expiration_minutes)
+            check, order_id = self._call_with_retry(
+                self.api.buy, amount, pair, action, expiration_minutes
+            )
             if check:
                 return True, order_id
             return False, f"buy() returned False: {order_id}"
@@ -135,7 +151,9 @@ class Broker:
             log.warning("Classic buy() failed (%s), trying digital spot...", e)
 
         try:
-            check, order_id = self.api.buy_digital_spot(pair, amount, action, expiration_minutes)
+            check, order_id = self._call_with_retry(
+                self.api.buy_digital_spot, pair, amount, action, expiration_minutes
+            )
             return check, order_id
         except Exception as e:
             return False, f"digital spot buy failed: {e}"
