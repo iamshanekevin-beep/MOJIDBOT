@@ -35,23 +35,28 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .badge { font-size:11px; padding:3px 8px; border-radius:6px; font-weight:600; }
   .badge-cooldown { background:#ff6b6b22; color:#ff6b6b; border:1px solid #ff6b6b44; }
   .badge-pending { background:#61dafb22; color:#61dafb; border:1px solid #61dafb44; }
-  .btn-account-practice { background:#61dafb; color:#0f0f23; }
-  .btn-account-real { background:#ff6b6b; color:#fff; }
+  .btn-account-practice { background:#61dafb; color:#0f0f23; padding:10px 20px; font-size:14px; border-radius:8px; -webkit-tap-highlight-color:transparent; touch-action:manipulation; }
+  .btn-account-practice:active { transform:scale(0.93); }
+  .btn-account-real { background:#ff6b6b; color:#fff; padding:10px 20px; font-size:14px; border-radius:8px; -webkit-tap-highlight-color:transparent; touch-action:manipulation; }
+  .btn-account-real:active { transform:scale(0.93); }
   .stake-options { display:flex; gap:6px; flex-wrap:wrap; }
-  .btn-stake { padding:5px 12px; border:1px solid #2a2a4a; border-radius:6px; background:#1a1a2e; color:#888; font-size:13px; cursor:pointer; font-weight:600; transition:all .15s; }
+  .btn-stake { padding:10px 18px; border:1px solid #2a2a4a; border-radius:8px; background:#1a1a2e; color:#888; font-size:15px; cursor:pointer; font-weight:600; transition:all .12s; -webkit-tap-highlight-color:transparent; touch-action:manipulation; min-width:48px; min-height:44px; }
+  .btn-stake:active { transform:scale(0.93); }
   .btn-stake.active { background:#4CAF50; color:#fff; border-color:#4CAF50; }
   .btn-stake:hover { background:#2a2a4a; }
   .controls { background:#1a1a2e; border:1px solid #2a2a4a; border-radius:12px; padding:16px; margin-bottom:16px; }
   .control-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
-  .btn { padding:8px 16px; border:none; border-radius:8px; font-size:14px; font-weight:600; cursor:pointer; transition:all .15s; }
+  .btn { padding:12px 24px; border:none; border-radius:10px; font-size:15px; font-weight:600; cursor:pointer; transition:all .12s; -webkit-tap-highlight-color:transparent; touch-action:manipulation; }
+  .btn:active { transform:scale(0.95); }
   .btn-pause { background:#ff6b6b; color:#fff; }
   .btn-resume { background:#4CAF50; color:#fff; }
-  .btn-small { padding:5px 10px; font-size:12px; background:#2a2a4a; color:#e0e0e0; }
+  .btn-small { padding:8px 14px; font-size:13px; background:#2a2a4a; color:#e0e0e0; -webkit-tap-highlight-color:transparent; touch-action:manipulation; }
+  .btn-small:active { transform:scale(0.93); background:#3a3a5a; }
   .btn-small:hover { background:#3a3a5a; }
   .pair-list { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
-  .pair-tag { background:#2a2a4a; padding:4px 10px; border-radius:6px; font-size:13px; display:flex; align-items:center; gap:6px; }
+  .pair-tag { background:#2a2a4a; padding:6px 12px; border-radius:6px; font-size:13px; display:flex; align-items:center; gap:6px; }
   .pair-tag .flag { font-size:16px; line-height:1; }
-  .pair-input { background:#0f0f23; border:1px solid #2a2a4a; color:#e0e0e0; padding:5px 10px; border-radius:6px; font-size:13px; width:140px; }
+  .pair-input { background:#0f0f23; border:1px solid #2a2a4a; color:#e0e0e0; padding:8px 12px; border-radius:6px; font-size:14px; width:140px; }
   .config-bar { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; font-size:13px; }
   .config-bar span { background:#1a1a2e; padding:6px 12px; border-radius:6px; border:1px solid #2a2a4a; }
   .config-bar b { color:#4CAF50; }
