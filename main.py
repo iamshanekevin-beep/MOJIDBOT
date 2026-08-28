@@ -58,8 +58,8 @@ class RiskState:
 
 
 def main():
-    log.info("Starting bot | pair=%s strategy=%s auto_trade=%s account=%s",
-              config.PAIR, config.STRATEGY, config.AUTO_TRADE, config.ACCOUNT_TYPE)
+    log.info("Starting bot | strategy=%s auto_trade=%s account=%s",
+              config.STRATEGY, config.AUTO_TRADE, config.ACCOUNT_TYPE)
 
     if not config.IQ_EMAIL or not config.IQ_PASSWORD:
         log.error("IQ_EMAIL / IQ_PASSWORD are not set. Set them in Railway's Variables tab.")
@@ -76,68 +76,58 @@ def main():
             log.error("Connection failed (%s). Retrying in 15s...", e)
             time.sleep(15)
 
-    log.info("Trading pair: %s", broker.get_active_pair())
-    last_candle_ts = None
+    pairs = broker.get_available_pairs()
+    log.info("Scanning %d pairs: %s", len(pairs), ", ".join(pairs))
+    last_candle_ts = {}  # pair -> last processed candle timestamp
 
     while True:
         try:
-            df = broker.get_candles_df()
-            if df.empty:
-                time.sleep(config.POLL_SECONDS)
-                continue
+            for pair in pairs:
+                df = broker.get_candles_df(pair=pair)
+                if df.empty:
+                    continue
 
-            latest_ts = df["timestamp"].iloc[-1]
-            if latest_ts == last_candle_ts:
-                # no new closed candle yet
-                time.sleep(config.POLL_SECONDS)
-                continue
-            last_candle_ts = latest_ts
+                latest_ts = df["timestamp"].iloc[-1]
+                if latest_ts == last_candle_ts.get(pair):
+                    continue  # already processed this candle
+                last_candle_ts[pair] = latest_ts
 
-            direction, info = strategy.get_signal(df)
+                direction, info = strategy.get_signal(df)
+                if direction is None:
+                    log.info("No signal. pair=%s %s", pair, _summarize(info))
+                    continue
 
-            if direction is None:
-                log.info("No signal. %s", _summarize(info))
-                time.sleep(config.POLL_SECONDS)
-                continue
+                log.info("Signal: %s | pair=%s | %s", direction, pair, _summarize(info))
 
-            log.info("Signal: %s | %s", direction, _summarize(info))
+                if not config.AUTO_TRADE:
+                    continue
 
-            if not config.AUTO_TRADE:
-                log.info("AUTO_TRADE is off — signal logged only, no order placed.")
-                time.sleep(config.POLL_SECONDS)
-                continue
+                can_trade, reason = risk.can_trade()
+                if not can_trade:
+                    log.warning("Trade skipped — risk control: %s", reason)
+                    break  # stop scanning if risk limit hit
 
-            can_trade, reason = risk.can_trade()
-            if not can_trade:
-                log.warning("Trade skipped — risk control: %s", reason)
-                time.sleep(config.POLL_SECONDS)
-                continue
+                success, order_id = broker.place_trade(direction, pair=pair)
+                risk.record_trade(config.TRADE_AMOUNT)
 
-            success, order_id = broker.place_trade(direction)
-            risk.record_trade(config.TRADE_AMOUNT)
+                if not success:
+                    log.error("Trade failed: %s pair=%s", order_id, pair)
+                    continue
 
-            if not success:
-                log.error("Trade failed: %s", order_id)
-                time.sleep(config.POLL_SECONDS)
-                continue
+                log.info("Trade placed: %s pair=%s amount=%s order_id=%s",
+                          direction, pair, config.TRADE_AMOUNT, order_id)
 
-            log.info("Trade placed: %s amount=%s order_id=%s", direction, config.TRADE_AMOUNT, order_id)
-
-            # wait roughly for expiry then check result for risk tracking
-            time.sleep(config.EXPIRATION_MINUTES * 60 + 5)
-            result = broker.get_trade_result(order_id)
-            risk.record_result(result, config.TRADE_AMOUNT)
-            log.info("Trade result: %s | daily P&L (approx): %.2f", result, risk.pnl_today)
+            time.sleep(config.POLL_SECONDS)
 
         except Exception as e:
             log.error("Error in main loop: %s. Reconnecting in 15s...", e)
             time.sleep(15)
-            # Retry reconnect until it succeeds — don't return to the main
-            # loop with a broken connection.
             while True:
                 try:
-                    broker.api = None  # discard the dead websocket
+                    broker.api = None
                     broker.connect()
+                    pairs = broker.get_available_pairs()
+                    log.info("Reconnected. Scanning %d pairs: %s", len(pairs), ", ".join(pairs))
                     break
                 except Exception as e2:
                     log.error("Reconnect failed: %s. Retrying in 30s...", e2)

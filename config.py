@@ -30,6 +30,7 @@ ACCOUNT_TYPE = os.getenv("ACCOUNT_TYPE", "PRACTICE")  # PRACTICE or REAL — sta
 
 # --- Market / instrument ---
 PAIR = os.getenv("PAIR", "EURUSD-OTC")
+PAIRS = os.getenv("PAIRS", "EURUSD-OTC,GBPUSD-OTC,USDJPY-OTC,USDCHF-OTC,EURGBP-OTC")
 TIMEFRAME_SECONDS = _get_int("TIMEFRAME_SECONDS", 60)     # candle size, e.g. 60 = M1
 CANDLE_COUNT = _get_int("CANDLE_COUNT", 100)              # how many candles to pull each cycle
 EXPIRATION_MINUTES = _get_int("EXPIRATION_MINUTES", 1)    # trade expiry

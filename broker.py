@@ -93,6 +93,19 @@ class Broker:
     def get_active_pair(self):
         return self.active_pair or config.PAIR
 
+    def get_available_pairs(self):
+        """Return tradeable pairs from config that are currently open."""
+        configured = [p.strip() for p in config.PAIRS.split(",") if p.strip()]
+        if self.open_assets:
+            usable = [p for p in configured if p in self.open_assets]
+            if usable:
+                return usable
+            # None of the configured pairs are open — use all open OTC pairs
+            otc = sorted([a for a in self.open_assets if "OTC" in a])
+            if otc:
+                return otc
+        return configured if configured else [config.PAIR]
+
     def ensure_connected(self):
         if self.api is None or not self.api.check_connect():
             log.warning("Connection dropped — reconnecting...")
