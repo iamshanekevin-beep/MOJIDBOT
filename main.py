@@ -1,6 +1,6 @@
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import config
 import strategy
@@ -21,7 +21,7 @@ class RiskState:
         self.consecutive_losses = 0
         self.pnl_today = 0.0
         self.day = datetime.now(timezone.utc).date()
-        self.paused = False
+        self.cooldown_until = None  # datetime when cooldown ends
 
     def reset_if_new_day(self):
         today = datetime.now(timezone.utc).date()
@@ -31,19 +31,22 @@ class RiskState:
             self.trades_today = 0
             self.consecutive_losses = 0
             self.pnl_today = 0.0
-            self.paused = False
+            self.cooldown_until = None
 
     def can_trade(self):
         self.reset_if_new_day()
-        if self.paused:
-            return False, "paused after hitting a risk limit"
+        if self.cooldown_until is not None:
+            now = datetime.now(timezone.utc)
+            if now < self.cooldown_until:
+                remaining = (self.cooldown_until - now).total_seconds() / 60
+                return False, f"cooldown ({remaining:.0f}m remaining) — bot still hunting"
+            # Cooldown expired — resume trading
+            log.info("Cooldown expired — resuming trading.")
+            self.cooldown_until = None
+            self.consecutive_losses = 0
         if self.trades_today >= config.MAX_TRADES_PER_DAY:
             return False, "hit MAX_TRADES_PER_DAY"
-        if self.consecutive_losses >= config.MAX_CONSECUTIVE_LOSSES:
-            self.paused = True
-            return False, "hit MAX_CONSECUTIVE_LOSSES"
         if self.pnl_today <= -abs(config.DAILY_LOSS_LIMIT):
-            self.paused = True
             return False, "hit DAILY_LOSS_LIMIT"
         return True, None
 
@@ -57,6 +60,11 @@ class RiskState:
         elif result == "loss":
             self.consecutive_losses += 1
             self.pnl_today -= amount
+            if self.consecutive_losses >= config.MAX_CONSECUTIVE_LOSSES:
+                self.cooldown_until = datetime.now(timezone.utc) + timedelta(minutes=config.COOLDOWN_MINUTES)
+                log.warning("Hit %d consecutive losses — %d-minute cooldown started. Bot keeps hunting.",
+                           config.MAX_CONSECUTIVE_LOSSES, config.COOLDOWN_MINUTES)
+                notify(f"⏸️ {config.MAX_CONSECUTIVE_LOSSES} losses in a row — {config.COOLDOWN_MINUTES}m cooldown. Bot keeps hunting.")
 
 
 def main():
@@ -145,7 +153,7 @@ def main():
                 if not can_trade:
                     log.warning("Trade skipped — risk control: %s", reason)
                     metrics_writer.write_metrics(metrics)
-                    break  # stop scanning if risk limit hit
+                    continue  # keep scanning/hunting for signals
 
                 success, order_id = broker.place_trade(direction, pair=pair)
                 risk.record_trade(config.TRADE_AMOUNT)
@@ -170,6 +178,24 @@ def main():
                 log.info("Trade placed: %s pair=%s amount=%s order_id=%s",
                           direction, pair, config.TRADE_AMOUNT, order_id)
                 notify(f"✅ Trade placed: {direction} | {pair} | ${config.TRADE_AMOUNT} | #{order_id}")
+                metrics_writer.write_metrics(metrics)
+
+                # Wait for trade to expire, then check result
+                wait_secs = config.EXPIRATION_MINUTES * 60 + 30
+                log.info("Waiting %ds for trade result (order_id=%s)...", wait_secs, order_id)
+                time.sleep(wait_secs)
+                result = broker.get_trade_result(order_id)
+                risk.record_result(result, config.TRADE_AMOUNT)
+
+                if result == "win":
+                    log.info("Trade WON: %s pair=%s order_id=%s", direction, pair, order_id)
+                    notify(f"💰 WON: {direction} | {pair} | ${config.TRADE_AMOUNT}")
+                elif result == "loss":
+                    log.info("Trade LOST: %s pair=%s order_id=%s", direction, pair, order_id)
+                    notify(f"❌ LOST: {direction} | {pair} | ${config.TRADE_AMOUNT}")
+                else:
+                    log.info("Trade result unknown: %s pair=%s order_id=%s", direction, pair, order_id)
+
                 metrics_writer.write_metrics(metrics)
 
             time.sleep(config.POLL_SECONDS)

@@ -60,7 +60,8 @@ POLE_POSITION_SCORE_THRESHOLD = _get_int("POLE_POSITION_SCORE_THRESHOLD", 3)  # 
 # --- Risk / money management ---
 TRADE_AMOUNT = _get_float("TRADE_AMOUNT", 1.0)
 MAX_TRADES_PER_DAY = _get_int("MAX_TRADES_PER_DAY", 20)
-MAX_CONSECUTIVE_LOSSES = _get_int("MAX_CONSECUTIVE_LOSSES", 3)   # bot pauses itself after this many losses in a row
+MAX_CONSECUTIVE_LOSSES = _get_int("MAX_CONSECUTIVE_LOSSES", 3)   # bot cooldowns after this many losses in a row
+COOLDOWN_MINUTES = _get_int("COOLDOWN_MINUTES", 15)              # cooldown duration after consecutive losses
 DAILY_LOSS_LIMIT = _get_float("DAILY_LOSS_LIMIT", 20.0)          # bot stops trading for the day past this loss
 
 # --- Behavior ---
