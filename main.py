@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 import config
 import strategy
 from broker import Broker
+from notifier import notify
+import metrics_writer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -80,8 +82,20 @@ def main():
     log.info("Scanning %d pairs: %s", len(pairs), ", ".join(pairs))
     last_candle_ts = {}  # pair -> last processed candle timestamp
 
+    # Live metrics state
+    metrics = metrics_writer.init_metrics()
+    metrics["pairs"] = pairs
+    metrics["strategy"] = config.STRATEGY
+    metrics["auto_trade"] = config.AUTO_TRADE
+    metrics["account_type"] = config.ACCOUNT_TYPE
+    metrics["trade_amount"] = config.TRADE_AMOUNT
+    metrics["max_consecutive_losses"] = config.MAX_CONSECUTIVE_LOSSES
+    metrics_writer.write_metrics(metrics)
+
     while True:
         try:
+            metrics["total_cycles"] += 1
+
             for pair in pairs:
                 df = broker.get_candles_df(pair=pair)
                 if df.empty:
@@ -93,18 +107,44 @@ def main():
                 last_candle_ts[pair] = latest_ts
 
                 direction, info = strategy.get_signal(df)
+
                 if direction is None:
+                    metrics["no_signal_count"] += 1
                     log.info("No signal. pair=%s %s", pair, _summarize(info))
+                    metrics_writer.write_metrics(metrics)
                     continue
+
+                # Record signal
+                metrics["total_signals"] += 1
+                if direction == "CALL":
+                    metrics["call_signals"] += 1
+                else:
+                    metrics["put_signals"] += 1
+                metrics["last_signal"] = {
+                    "direction": direction, "pair": pair, "info": info,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                metrics["signal_history"].append({
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "direction": direction, "pair": pair,
+                    "price": df["close"].iloc[-1],
+                })
+                # Keep last 50 signals
+                metrics["signal_history"] = metrics["signal_history"][-50:]
 
                 log.info("Signal: %s | pair=%s | %s", direction, pair, _summarize(info))
 
+                # Telegram alert
+                notify(f"📊 Signal: {direction} | {pair} | {config.STRATEGY}")
+
                 if not config.AUTO_TRADE:
+                    metrics_writer.write_metrics(metrics)
                     continue
 
                 can_trade, reason = risk.can_trade()
                 if not can_trade:
                     log.warning("Trade skipped — risk control: %s", reason)
+                    metrics_writer.write_metrics(metrics)
                     break  # stop scanning if risk limit hit
 
                 success, order_id = broker.place_trade(direction, pair=pair)
@@ -112,10 +152,25 @@ def main():
 
                 if not success:
                     log.error("Trade failed: %s pair=%s", order_id, pair)
+                    metrics_writer.write_metrics(metrics)
                     continue
+
+                metrics["trades_placed"] += 1
+                trade_entry = {
+                    "pair": pair, "direction": direction, "amount": config.TRADE_AMOUNT,
+                    "order_id": str(order_id), "status": "placed",
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                }
+                metrics["last_trade"] = trade_entry
+                metrics["trade_history"].append(trade_entry)
+                metrics["trade_history"] = metrics["trade_history"][-50:]
+                metrics["placed_trades"].append(trade_entry)
+                metrics["placed_trades"] = metrics["placed_trades"][-20:]
 
                 log.info("Trade placed: %s pair=%s amount=%s order_id=%s",
                           direction, pair, config.TRADE_AMOUNT, order_id)
+                notify(f"✅ Trade placed: {direction} | {pair} | ${config.TRADE_AMOUNT} | #{order_id}")
+                metrics_writer.write_metrics(metrics)
 
             time.sleep(config.POLL_SECONDS)
 
