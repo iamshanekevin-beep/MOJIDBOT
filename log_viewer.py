@@ -244,9 +244,7 @@ function updateMetrics(d) {
   // Cooldown & pending badges
   const cdBadge = document.getElementById('cooldown-badge');
   cdBadge.style.display = d.cooldown ? '' : 'none';
-  const pBadge = document.getElementById('pending-badge');
-  if (d.pending_trades > 0) { pBadge.style.display = ''; pBadge.textContent = 'Pending: ' + d.pending_trades; }
-  else pBadge.style.display = 'none';
+  document.getElementById('pending-badge').style.display = 'none';
 
   // Config
   document.getElementById('cfg-strategy').textContent = d.strategy || '—';
@@ -315,7 +313,7 @@ function updateMetrics(d) {
   // Trade history
   if (d.placed_trades && d.placed_trades.length > 0) {
     let rows = '';
-    for (const t of d.placed_trades) {
+    for (const t of d.placed_trades.filter(function(t) { return t.status && t.status !== 'pending'; })) {
       const pair = t.pair || '—';
       const dir = t.direction || '—';
       const status = t.status || 'pending';
