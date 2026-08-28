@@ -94,17 +94,21 @@ class Broker:
         return self.active_pair or config.PAIR
 
     def get_available_pairs(self):
-        """Return tradeable pairs from config that are currently open."""
+        """Return tradeable pairs from config that are currently open AND in the opcode table."""
+        from iqoptionapi.constants import ACTIVES as OP_ACTIVES
         configured = [p.strip() for p in config.PAIRS.split(",") if p.strip()]
+        # A pair can only be fetched if it's in the library's opcode table —
+        # otherwise get_candles() enters an infinite reconnect loop.
+        opcode_ok = [p for p in configured if p in OP_ACTIVES]
         if self.open_assets:
-            usable = [p for p in configured if p in self.open_assets]
+            usable = [p for p in opcode_ok if p in self.open_assets]
             if usable:
                 return usable
-            # None of the configured pairs are open — use all open OTC pairs
-            otc = sorted([a for a in self.open_assets if "OTC" in a])
+            # None of the configured pairs are open — use open pairs from the opcode table
+            otc = sorted([p for p in self.open_assets if "OTC" in p and p in OP_ACTIVES])
             if otc:
                 return otc
-        return configured if configured else [config.PAIR]
+        return opcode_ok if opcode_ok else [config.PAIR]
 
     def ensure_connected(self):
         if self.api is None or not self.api.check_connect():
@@ -120,11 +124,17 @@ class Broker:
         """Call an IQ Option API method; on connection failure, reconnect and retry once."""
         try:
             self.ensure_connected()
-            return fn(*args, **kwargs)
+            result = fn(*args, **kwargs)
+            if not result:
+                raise ConnectionError(f"{fn.__name__} returned empty — reconnecting")
+            return result
         except Exception as e:
             log.warning("API call failed (%s) — reconnecting and retrying...", e)
             self._reconnect()
-            return fn(*args, **kwargs)
+            result = fn(*args, **kwargs)
+            if not result:
+                raise ConnectionError(f"{fn.__name__} returned empty after reconnect")
+            return result
 
     def get_candles_df(self, pair=None, timeframe_seconds=None, count=None) -> pd.DataFrame:
         pair = pair or self.get_active_pair()
@@ -134,6 +144,8 @@ class Broker:
         raw = self._call_with_retry(
             self.api.get_candles, pair, timeframe_seconds, count, time.time()
         )
+        if not raw:
+            raise ConnectionError("get_candles returned empty/None — forcing reconnect")
         df = pd.DataFrame(raw)
         # iqoptionapi candle dicts typically have: open, close, min, max, from
         df = df.rename(columns={"min": "low", "max": "high", "from": "timestamp"})
