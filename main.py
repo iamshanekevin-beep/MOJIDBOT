@@ -7,6 +7,7 @@ import strategy
 from broker import Broker
 from notifier import notify
 import metrics_writer
+import telegram_bot
 
 logging.basicConfig(
     level=logging.INFO,
@@ -64,7 +65,7 @@ class RiskState:
                 self.cooldown_until = datetime.now(timezone.utc) + timedelta(minutes=config.COOLDOWN_MINUTES)
                 log.warning("Hit %d consecutive losses — %d-minute cooldown started. Bot keeps hunting.",
                            config.MAX_CONSECUTIVE_LOSSES, config.COOLDOWN_MINUTES)
-                notify(f"⏸️ {config.MAX_CONSECUTIVE_LOSSES} losses in a row — {config.COOLDOWN_MINUTES}m cooldown. Bot keeps hunting.")
+                telegram_bot.send_cooldown_card(config.MAX_CONSECUTIVE_LOSSES, config.COOLDOWN_MINUTES)
 
 
 def main():
@@ -99,6 +100,11 @@ def main():
     metrics["trade_amount"] = config.TRADE_AMOUNT
     metrics["max_consecutive_losses"] = config.MAX_CONSECUTIVE_LOSSES
     metrics_writer.write_metrics(metrics)
+
+    # Start Telegram command controller
+    tg = telegram_bot.TelegramController(broker, risk, metrics)
+    tg.start()
+    telegram_bot.send_started()
 
     while True:
         try:
@@ -142,12 +148,26 @@ def main():
 
                 log.info("Signal: %s | pair=%s | %s", direction, pair, _summarize(info))
 
-                # Telegram alert
-                notify(f"📊 Signal: {direction} | {pair} | {config.STRATEGY}")
+                # Telegram styled signal card
+                telegram_bot.send_signal_card(direction, pair, info)
 
                 if not config.AUTO_TRADE:
                     metrics_writer.write_metrics(metrics)
                     continue
+
+                # Check Telegram pause command
+                if tg.is_paused():
+                    log.info("Trade skipped — bot paused via Telegram")
+                    metrics_writer.write_metrics(metrics)
+                    continue
+
+                # Check if account switch requested via Telegram
+                if tg.check_reconnect():
+                    log.info("Account switch requested — reconnecting...")
+                    broker.api = None
+                    broker.connect()
+                    pairs = broker.get_available_pairs()
+                    log.info("Reconnected on %s account. Scanning %d pairs.", config.ACCOUNT_TYPE, len(pairs))
 
                 can_trade, reason = risk.can_trade()
                 if not can_trade:
@@ -178,27 +198,31 @@ def main():
 
                 log.info("Trade placed: %s pair=%s amount=%s order_id=%s",
                           direction, pair, config.TRADE_AMOUNT, order_id)
-                notify(f"✅ Trade placed: {direction} | {pair} | ${config.TRADE_AMOUNT} | #{order_id}")
                 metrics_writer.write_metrics(metrics)
 
                 # Wait for trade to expire, then check result via balance diff
                 wait_secs = config.EXPIRATION_MINUTES * 60 + 30
                 log.info("Waiting %ds for trade result (order_id=%s)...", wait_secs, order_id)
                 time.sleep(wait_secs)
+                balance_after = broker.get_balance()
+                profit = (balance_after - balance_before) if (balance_before is not None and balance_after is not None) else None
                 result = broker.get_trade_result_by_balance(balance_before, config.TRADE_AMOUNT)
                 risk.record_result(result, config.TRADE_AMOUNT)
 
                 if result == "win":
                     log.info("Trade WON: %s pair=%s order_id=%s", direction, pair, order_id)
-                    notify(f"💰 WON: {direction} | {pair} | ${config.TRADE_AMOUNT}")
                 elif result == "loss":
                     log.info("Trade LOST: %s pair=%s order_id=%s", direction, pair, order_id)
-                    notify(f"❌ LOST: {direction} | {pair} | ${config.TRADE_AMOUNT}")
                 else:
                     log.info("Trade result unknown: %s pair=%s order_id=%s", direction, pair, order_id)
 
+                # Styled trade result card
+                telegram_bot.send_trade_card(direction, pair, config.TRADE_AMOUNT, result, profit)
+
                 metrics_writer.write_metrics(metrics)
 
+            if tg.check_force_scan():
+                continue  # skip sleep, scan immediately
             time.sleep(config.POLL_SECONDS)
 
         except Exception as e:
