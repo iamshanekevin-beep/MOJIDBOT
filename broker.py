@@ -183,18 +183,23 @@ class Broker:
         except Exception as e:
             return False, f"digital spot buy failed: {e}"
 
-    def get_trade_result(self, order_id, timeout=5):
-        """Best-effort win/loss check. Returns 'win', 'loss', 'unknown'."""
+    def get_balance(self):
+        """Get current account balance."""
         try:
-            result = self.api.check_win_v4(order_id) if hasattr(self.api, "check_win_v4") else None
-            if result is None:
-                return "unknown"
-            profit, status = result if isinstance(result, tuple) else (result, None)
-            if profit is not None and profit > 0:
-                return "win"
-            if profit is not None and profit < 0:
-                return "loss"
-            return "unknown"
+            self.ensure_connected()
+            return self.api.get_balance()
         except Exception as e:
-            log.warning("Could not fetch trade result: %s", e)
+            log.warning("Could not get balance: %s", e)
+            return None
+
+    def get_trade_result_by_balance(self, balance_before, amount):
+        """Determine win/loss by comparing balance before and after trade."""
+        balance_after = self.get_balance()
+        if balance_before is None or balance_after is None:
             return "unknown"
+        diff = balance_after - balance_before
+        if diff > 0:
+            return "win"
+        elif diff < 0:
+            return "loss"
+        return "unknown"

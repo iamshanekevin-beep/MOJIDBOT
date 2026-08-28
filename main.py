@@ -155,6 +155,7 @@ def main():
                     metrics_writer.write_metrics(metrics)
                     continue  # keep scanning/hunting for signals
 
+                balance_before = broker.get_balance()
                 success, order_id = broker.place_trade(direction, pair=pair)
                 risk.record_trade(config.TRADE_AMOUNT)
 
@@ -180,11 +181,11 @@ def main():
                 notify(f"✅ Trade placed: {direction} | {pair} | ${config.TRADE_AMOUNT} | #{order_id}")
                 metrics_writer.write_metrics(metrics)
 
-                # Wait for trade to expire, then check result
+                # Wait for trade to expire, then check result via balance diff
                 wait_secs = config.EXPIRATION_MINUTES * 60 + 30
                 log.info("Waiting %ds for trade result (order_id=%s)...", wait_secs, order_id)
                 time.sleep(wait_secs)
-                result = broker.get_trade_result(order_id)
+                result = broker.get_trade_result_by_balance(balance_before, config.TRADE_AMOUNT)
                 risk.record_result(result, config.TRADE_AMOUNT)
 
                 if result == "win":
