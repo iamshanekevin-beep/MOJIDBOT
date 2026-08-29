@@ -19,16 +19,28 @@ import indicators as ind
 def fcb_signal(df):
     upper, lower = ind.fractal_chaos_bands(df, period=config.FCB_FRACTAL_PERIOD)
     price = df["close"].iloc[-1]
+    prev_price = df["close"].iloc[-2]
     up = upper.iloc[-1]
     low = lower.iloc[-1]
+    prev_up = upper.iloc[-2]
+    prev_low = lower.iloc[-2]
 
-    if pd.isna(up) or pd.isna(low):
+    if pd.isna(up) or pd.isna(low) or pd.isna(prev_up) or pd.isna(prev_low):
         return None, {"reason": "bands not yet confirmed"}
 
-    if price > up:
+    # Only signal on a FRESH breakout: previous close was inside the bands,
+    # current close has crossed outside. This prevents re-firing on every
+    # poll while price remains outside the bands.
+    was_inside = prev_low <= prev_price <= prev_up
+
+    if price > up and was_inside:
         return "CALL", {"price": price, "upper_band": up, "lower_band": low}
-    if price < low:
+    if price < low and was_inside:
         return "PUT", {"price": price, "upper_band": up, "lower_band": low}
+    if price > up:
+        return None, {"price": price, "upper_band": up, "lower_band": low, "reason": "above band but not a fresh breakout"}
+    if price < low:
+        return None, {"price": price, "upper_band": up, "lower_band": low, "reason": "below band but not a fresh breakout"}
     return None, {"price": price, "upper_band": up, "lower_band": low, "reason": "inside bands"}
 
 
