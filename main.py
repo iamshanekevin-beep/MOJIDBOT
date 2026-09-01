@@ -125,6 +125,25 @@ def main():
                     metrics["balance_history"].append({"ts": datetime.now(timezone.utc).isoformat(), "balance": bal})
                     metrics["balance_history"] = metrics["balance_history"][-100:]
 
+            # Update running status from Telegram/dashboard pause state
+            if tg.is_paused():
+                metrics["running"] = False
+                metrics["status"] = "paused"
+            else:
+                metrics["running"] = True
+                metrics["status"] = "connected"
+
+            # Check dashboard controls every cycle (pause, account, stake, force scan)
+            tg.check_dashboard_control()
+
+            # Check if account switch requested via Telegram or dashboard
+            if tg.check_reconnect():
+                log.info("Account switch requested — reconnecting...")
+                broker.api = None
+                broker.connect()
+                pairs = broker.get_available_pairs()
+                log.info("Reconnected on %s account. Scanning %d pairs.", config.ACCOUNT_TYPE, len(pairs))
+
             for pair in pairs:
                 df = broker.get_candles_df(pair=pair)
                 if df.empty:
@@ -170,22 +189,17 @@ def main():
                     metrics_writer.write_metrics(metrics)
                     continue
 
-                # Check Telegram pause command
+                # Check Telegram/dashboard pause
                 if tg.is_paused():
-                    log.info("Trade skipped — bot paused via Telegram")
+                    metrics["running"] = False
+                    metrics["status"] = "paused"
                     metrics_writer.write_metrics(metrics)
                     continue
 
-                # Check dashboard controls (pause, account, stake, force scan)
-                tg.check_dashboard_control()
-
-                # Check if account switch requested via Telegram or dashboard
-                if tg.check_reconnect():
-                    log.info("Account switch requested — reconnecting...")
-                    broker.api = None
-                    broker.connect()
-                    pairs = broker.get_available_pairs()
-                    log.info("Reconnected on %s account. Scanning %d pairs.", config.ACCOUNT_TYPE, len(pairs))
+                # Sync config changes from dashboard/Telegram to metrics
+                metrics["account_type"] = config.ACCOUNT_TYPE
+                metrics["trade_amount"] = config.TRADE_AMOUNT
+                metrics["running"] = not tg.is_paused()
 
                 can_trade, reason = risk.can_trade()
                 if not can_trade:
