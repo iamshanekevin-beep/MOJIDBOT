@@ -23,7 +23,7 @@ class Broker:
     def __init__(self):
         self.api = None
         self.open_assets = set()
-        self.actives_opcode = set()
+        self.active_ids = {}  # pair_name -> active_id (from IQ Option runtime)
         self.active_pair = None
 
     def connect(self):
@@ -53,22 +53,23 @@ class Broker:
             if not init:
                 log.warning("Open-asset list unavailable — falling back to configured pair.")
                 return
+            # Inject runtime active IDs into the library's static ACTIVES dict so
+            # get_candles/buy can resolve pair names the library doesn't know about.
+            from iqoptionapi.constants import ACTIVES
             for option in ("binary", "turbo"):
                 actives = init.get(option, {}).get("actives", {})
                 for active in actives.values():
+                    name = str(active.get("name", "")).split(".")[-1]
+                    active_id = active.get("id")
+                    if name and active_id is not None:
+                        self.active_ids[name] = active_id
+                        if name not in ACTIVES:
+                            ACTIVES[name] = active_id
                     if active.get("enabled") and not active.get("is_suspended"):
-                        name = str(active.get("name", "")).split(".")[-1]
                         if name:
                             self.open_assets.add(name)
-            # Cache the opcode table (active name -> id) so we only ever hand
-            # get_candles() a pair it can actually resolve — handing it a name
-            # that is absent from this table makes it KeyError into an infinite
-            # "need reconnect" loop.
-            try:
-                self.actives_opcode = set(self.api.get_all_ACTIVES_OPCODE().keys())
-            except Exception:
-                self.actives_opcode = set()
-            log.info("Found %d open assets (binary/turbo).", len(self.open_assets))
+            log.info("Found %d open assets (binary/turbo). %d total active IDs cached.",
+                     len(self.open_assets), len(self.active_ids))
         except Exception as e:
             log.warning("Could not fetch open-asset list (%s). "
                         "Will fall back to the configured pair.", e)
@@ -76,12 +77,9 @@ class Broker:
     def _resolve_pair(self):
         """Use the configured PAIR if open & tradeable, else an available tradeable pair."""
         pair = config.PAIR
-        # Only consider pairs the candle/trade calls can resolve (in the opcode
-        # table); otherwise get_candles() KeyErrors into an infinite reconnect loop.
-        usable = [p for p in sorted(self.open_assets)
-                  if not self.actives_opcode or p in self.actives_opcode]
-        if pair in self.open_assets and (not self.actives_opcode or pair in self.actives_opcode):
+        if pair in self.open_assets and pair in self.active_ids:
             return pair
+        usable = [p for p in sorted(self.open_assets) if p in self.active_ids]
         if usable:
             chosen = usable[0]
             log.warning("Configured pair %s is suspended/unavailable — "
@@ -94,21 +92,46 @@ class Broker:
         return self.active_pair or config.PAIR
 
     def get_available_pairs(self):
-        """Return tradeable pairs from config that are currently open AND in the opcode table."""
-        from iqoptionapi.constants import ACTIVES as OP_ACTIVES
+        """Return up to 10 tradeable pairs that are currently open AND resolvable by ID."""
         configured = [p.strip() for p in config.PAIRS.split(",") if p.strip()]
-        # A pair can only be fetched if it's in the library's opcode table —
-        # otherwise get_candles() enters an infinite reconnect loop.
-        opcode_ok = [p for p in configured if p in OP_ACTIVES]
+        # Use the runtime ID map (active_ids) instead of the static library constant,
+        # since the library's opcode table is outdated and misses many OTC pairs.
         if self.open_assets:
-            usable = [p for p in opcode_ok if p in self.open_assets]
-            if usable:
-                return usable
-            # None of the configured pairs are open — use open pairs from the opcode table
-            otc = sorted([p for p in self.open_assets if "OTC" in p and p in OP_ACTIVES])
-            if otc:
-                return otc
-        return opcode_ok if opcode_ok else [config.PAIR]
+            # Try configured pairs first (preserve user's preferred order)
+            usable = [p for p in configured if p in self.open_assets and p in self.active_ids]
+            if len(usable) >= 10:
+                return usable[:10]
+            # Fewer than 10 configured pairs available — fill with other open OTC pairs
+            forex_otc = sorted([p for p in self.open_assets
+                                if "OTC" in p and p in self.active_ids
+                                and p not in usable
+                                and len(p.replace("-OTC", "")) == 6
+                                and p.replace("-OTC", "").isalpha()])
+            combined = usable + forex_otc
+            if len(combined) >= 10:
+                return combined[:10]
+            if combined:
+                log.info("Using %d available pairs: %s", len(combined), ", ".join(combined[:10]))
+                return combined[:10]
+            # None of the configured pairs are open — fill up to 10 from available assets:
+            # prefer forex OTC pairs (6-char base + -OTC), then regular OTC, then non-OTC forex
+            forex_otc = sorted([p for p in self.open_assets
+                                if "OTC" in p and p in self.active_ids
+                                and len(p.replace("-OTC", "")) == 6
+                                and p.replace("-OTC", "").isalpha()])
+            other_otc = sorted([p for p in self.open_assets
+                                if "OTC" in p and p in self.active_ids and p not in forex_otc])
+            non_otc = sorted([p for p in self.open_assets
+                              if "OTC" not in p and p in self.active_ids
+                              and len(p) == 6 and p.isalpha()])
+            combined = forex_otc + other_otc + non_otc
+            if combined:
+                log.info("Fallback: using %d available pairs: %s",
+                         min(10, len(combined)), ", ".join(combined[:10]))
+                return combined[:10]
+        # Last resort: configured pairs that have IDs
+        with_ids = [p for p in configured if p in self.active_ids]
+        return with_ids if with_ids else [config.PAIR]
 
     def ensure_connected(self):
         if self.api is None or not self.api.check_connect():
