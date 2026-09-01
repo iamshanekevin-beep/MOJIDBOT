@@ -213,51 +213,34 @@ def main():
                     metrics_writer.write_metrics(metrics)
                     continue  # keep scanning/hunting for signals
 
-                balance_before = broker.get_balance()
-                success, order_id = broker.place_trade(direction, pair=pair)
-                risk.record_trade(config.TRADE_AMOUNT)
-
-                if not success:
-                    log.error("Trade failed: %s pair=%s", order_id, pair)
-                    metrics_writer.write_metrics(metrics)
-                    continue
-
-                metrics["trades_placed"] += 1
-                trade_entry = {
-                    "pair": pair, "direction": direction, "amount": config.TRADE_AMOUNT,
-                    "order_id": str(order_id), "status": "placed",
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                }
-                metrics["last_trade"] = trade_entry
-                metrics["trade_history"].append(trade_entry)
-                metrics["trade_history"] = metrics["trade_history"][-50:]
-                metrics["placed_trades"].append(trade_entry)
-                metrics["placed_trades"] = metrics["placed_trades"][-20:]
-
-                log.info("Trade placed: %s pair=%s amount=%s order_id=%s",
-                          direction, pair, config.TRADE_AMOUNT, order_id)
-                metrics_writer.write_metrics(metrics)
-
-                # Wait for trade to expire, then check result via balance diff
                 wait_secs = config.EXPIRATION_MINUTES * 60 + 30
-                log.info("Waiting %ds for trade result (order_id=%s)...", wait_secs, order_id)
-                time.sleep(wait_secs)
-                balance_after = broker.get_balance()
-                profit = (balance_after - balance_before) if (balance_before is not None and balance_after is not None) else None
-                result = broker.get_trade_result_by_balance(balance_before, config.TRADE_AMOUNT)
-                risk.record_result(result, config.TRADE_AMOUNT)
+                result, profit = _place_and_wait(broker, risk, metrics, direction, pair, wait_secs)
 
-                if result == "win":
-                    log.info("Trade WON: %s pair=%s order_id=%s", direction, pair, order_id)
-                elif result == "loss":
-                    log.info("Trade LOST: %s pair=%s order_id=%s", direction, pair, order_id)
-                else:
-                    log.info("Trade result unknown: %s pair=%s order_id=%s", direction, pair, order_id)
-
-                # Styled trade result card
-                telegram_bot.send_trade_card(direction, pair, config.TRADE_AMOUNT, result, profit)
-
-                metrics_writer.write_metrics(metrics)
+                # ── Pole Position trade continuation ──────────────────────────
+                # After a winning trade, ride the trend: if Pole Position still
+                # confirms the same direction, place follow-up trades.  Stop on
+                # a loss, PP disagreement, pause, or MAX_CONTINUATION_TRADES.
+                if result == "win" and config.MAX_CONTINUATION_TRADES > 0:
+                    for cont in range(config.MAX_CONTINUATION_TRADES):
+                        if tg.is_paused():
+                            break
+                        can_trade, reason = risk.can_trade()
+                        if not can_trade:
+                            log.warning("Continuation stopped — %s", reason)
+                            break
+                        df_cont = broker.get_candles_df(pair=pair)
+                        if df_cont.empty:
+                            break
+                        pp_dir, pp_info = strategy.pole_position_signal(df_cont)
+                        log.info("Continuation check #%d: PP=%s score=%s pair=%s",
+                                  cont + 1, pp_dir, pp_info.get("score", 0), pair)
+                        if pp_dir != direction:
+                            log.info("Continuation stopped — PP no longer confirms %s", direction)
+                            break
+                        log.info("Continuation trade #%d: PP confirms %s on %s", cont + 1, pp_dir, pair)
+                        result, profit = _place_and_wait(broker, risk, metrics, pp_dir, pair, wait_secs)
+                        if result != "win":
+                            break
 
             if warming_up:
                 warming_up = False
@@ -281,6 +264,51 @@ def main():
                 except Exception as e2:
                     log.error("Reconnect failed: %s. Retrying in 30s...", e2)
                     time.sleep(30)
+
+
+def _place_and_wait(broker, risk, metrics, direction, pair, wait_secs):
+    """Place a trade, wait for expiry, record the result, and return (result, profit)."""
+    balance_before = broker.get_balance()
+    success, order_id = broker.place_trade(direction, pair=pair)
+    risk.record_trade(config.TRADE_AMOUNT)
+
+    if not success:
+        log.error("Trade failed: %s pair=%s", order_id, pair)
+        return "failed", None
+
+    metrics["trades_placed"] += 1
+    trade_entry = {
+        "pair": pair, "direction": direction, "amount": config.TRADE_AMOUNT,
+        "order_id": str(order_id), "status": "placed",
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }
+    metrics["last_trade"] = trade_entry
+    metrics["trade_history"].append(trade_entry)
+    metrics["trade_history"] = metrics["trade_history"][-50:]
+    metrics["placed_trades"].append(trade_entry)
+    metrics["placed_trades"] = metrics["placed_trades"][-20:]
+
+    log.info("Trade placed: %s pair=%s amount=%s order_id=%s",
+              direction, pair, config.TRADE_AMOUNT, order_id)
+    metrics_writer.write_metrics(metrics)
+
+    log.info("Waiting %ds for trade result (order_id=%s)...", wait_secs, order_id)
+    time.sleep(wait_secs)
+    balance_after = broker.get_balance()
+    profit = (balance_after - balance_before) if (balance_before is not None and balance_after is not None) else None
+    result = broker.get_trade_result_by_balance(balance_before, config.TRADE_AMOUNT)
+    risk.record_result(result, config.TRADE_AMOUNT)
+
+    if result == "win":
+        log.info("Trade WON: %s pair=%s order_id=%s", direction, pair, order_id)
+    elif result == "loss":
+        log.info("Trade LOST: %s pair=%s order_id=%s", direction, pair, order_id)
+    else:
+        log.info("Trade result unknown: %s pair=%s order_id=%s", direction, pair, order_id)
+
+    telegram_bot.send_trade_card(direction, pair, config.TRADE_AMOUNT, result, profit)
+    metrics_writer.write_metrics(metrics)
+    return result, profit
 
 
 def _summarize(info):

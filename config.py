@@ -64,6 +64,12 @@ MAX_CONSECUTIVE_LOSSES = _get_int("MAX_CONSECUTIVE_LOSSES", 3)   # bot cooldowns
 COOLDOWN_MINUTES = _get_int("COOLDOWN_MINUTES", 15)              # cooldown duration after consecutive losses
 DAILY_LOSS_LIMIT = _get_float("DAILY_LOSS_LIMIT", 20.0)          # bot stops trading for the day past this loss
 
+# --- Trade continuation ---
+# After a winning trade, check Pole Position: if it confirms the same
+# direction, place a follow-up trade.  Ride the trend until PP disagrees,
+# a loss, or the limit is hit.
+MAX_CONTINUATION_TRADES = _get_int("MAX_CONTINUATION_TRADES", 3)
+
 # --- Behavior ---
 AUTO_TRADE = _get_bool("AUTO_TRADE", True)   # False = log signals only, no orders placed
 POLL_SECONDS = _get_int("POLL_SECONDS", 5)   # how often to check for a new closed candle
