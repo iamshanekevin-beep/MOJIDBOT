@@ -107,6 +107,10 @@ def main():
     tg.start()
     telegram_bot.send_started()
 
+    # Track active (non-blocking) trades so multiple pairs can trade concurrently
+    pending_trades = []   # list of pending-trade dicts
+    pending_pairs = set()  # pairs with an unresolved trade (no duplicate trades)
+
     while True:
         try:
             metrics["total_cycles"] += 1
@@ -145,6 +149,13 @@ def main():
                 pairs = broker.get_available_pairs()
                 warming_up = True
                 log.info("Reconnected on %s account. Scanning %d pairs.", config.ACCOUNT_TYPE, len(pairs))
+
+            # ── Resolve expired pending trades before scanning ──────────────
+            resolved = _resolve_pending(broker, risk, metrics, pending_trades, tg)
+            for t in resolved:
+                pending_pairs.discard(t["pair"])
+                if config.AUTO_TRADE:
+                    _maybe_continue(broker, risk, metrics, pending_trades, pending_pairs, tg, t)
 
             for pair in pairs:
                 df = broker.get_candles_df(pair=pair)
@@ -207,40 +218,22 @@ def main():
                 metrics["trade_amount"] = config.TRADE_AMOUNT
                 metrics["running"] = not tg.is_paused()
 
+                # Don't open a second trade on a pair that already has one pending
+                if pair in pending_pairs:
+                    log.info("Pair %s already has a pending trade — skipping.", pair)
+                    continue
+
                 can_trade, reason = risk.can_trade()
                 if not can_trade:
                     log.warning("Trade skipped — risk control: %s", reason)
                     metrics_writer.write_metrics(metrics)
                     continue  # keep scanning/hunting for signals
 
-                wait_secs = config.EXPIRATION_MINUTES * 60 + 30
-                result, profit = _place_and_wait(broker, risk, metrics, direction, pair, wait_secs)
-
-                # ── Pole Position trade continuation ──────────────────────────
-                # After a winning trade, ride the trend: if Pole Position still
-                # confirms the same direction, place follow-up trades.  Stop on
-                # a loss, PP disagreement, pause, or MAX_CONTINUATION_TRADES.
-                if result == "win" and config.MAX_CONTINUATION_TRADES > 0:
-                    for cont in range(config.MAX_CONTINUATION_TRADES):
-                        if tg.is_paused():
-                            break
-                        can_trade, reason = risk.can_trade()
-                        if not can_trade:
-                            log.warning("Continuation stopped — %s", reason)
-                            break
-                        df_cont = broker.get_candles_df(pair=pair)
-                        if df_cont.empty:
-                            break
-                        pp_dir, pp_info = strategy.pole_position_signal(df_cont)
-                        log.info("Continuation check #%d: PP=%s score=%s pair=%s",
-                                  cont + 1, pp_dir, pp_info.get("score", 0), pair)
-                        if pp_dir != direction:
-                            log.info("Continuation stopped — PP no longer confirms %s", direction)
-                            break
-                        log.info("Continuation trade #%d: PP confirms %s on %s", cont + 1, pp_dir, pair)
-                        result, profit = _place_and_wait(broker, risk, metrics, pp_dir, pair, wait_secs)
-                        if result != "win":
-                            break
+                # Place trade non-blocking — keeps scanning other pairs for more signals
+                new_trade = _place_trade(broker, risk, metrics, direction, pair)
+                if new_trade:
+                    pending_trades.append(new_trade)
+                    pending_pairs.add(pair)
 
             if warming_up:
                 warming_up = False
@@ -266,15 +259,18 @@ def main():
                     time.sleep(30)
 
 
-def _place_and_wait(broker, risk, metrics, direction, pair, wait_secs):
-    """Place a trade, wait for expiry, record the result, and return (result, profit)."""
+WAIT_SECS = config.EXPIRATION_MINUTES * 60 + 30
+
+
+def _place_trade(broker, risk, metrics, direction, pair, continuation_count=0):
+    """Place a trade non-blocking.  Returns a pending-trade dict, or None on failure."""
     balance_before = broker.get_balance()
     success, order_id = broker.place_trade(direction, pair=pair)
     risk.record_trade(config.TRADE_AMOUNT)
 
     if not success:
         log.error("Trade failed: %s pair=%s", order_id, pair)
-        return "failed", None
+        return None
 
     metrics["trades_placed"] += 1
     trade_entry = {
@@ -292,23 +288,81 @@ def _place_and_wait(broker, risk, metrics, direction, pair, wait_secs):
               direction, pair, config.TRADE_AMOUNT, order_id)
     metrics_writer.write_metrics(metrics)
 
-    log.info("Waiting %ds for trade result (order_id=%s)...", wait_secs, order_id)
-    time.sleep(wait_secs)
-    balance_after = broker.get_balance()
-    profit = (balance_after - balance_before) if (balance_before is not None and balance_after is not None) else None
-    result = broker.get_trade_result_by_balance(balance_before, config.TRADE_AMOUNT)
-    risk.record_result(result, config.TRADE_AMOUNT)
+    return {
+        "pair": pair,
+        "direction": direction,
+        "order_id": order_id,
+        "balance_before": balance_before,
+        "expires_at": time.time() + WAIT_SECS,
+        "continuation_count": continuation_count,
+    }
 
-    if result == "win":
-        log.info("Trade WON: %s pair=%s order_id=%s", direction, pair, order_id)
-    elif result == "loss":
-        log.info("Trade LOST: %s pair=%s order_id=%s", direction, pair, order_id)
-    else:
-        log.info("Trade result unknown: %s pair=%s order_id=%s", direction, pair, order_id)
 
-    telegram_bot.send_trade_card(direction, pair, config.TRADE_AMOUNT, result, profit)
-    metrics_writer.write_metrics(metrics)
-    return result, profit
+def _resolve_pending(broker, risk, metrics, pending_trades, tg):
+    """Check pending trades; resolve any that have expired.  Returns list of resolved dicts."""
+    resolved = []
+    still_pending = []
+    now = time.time()
+
+    for t in pending_trades:
+        if now < t["expires_at"]:
+            still_pending.append(t)
+            continue
+
+        # Trade expired — determine result
+        balance_after = broker.get_balance()
+        profit = (balance_after - t["balance_before"]) if (t["balance_before"] is not None and balance_after is not None) else None
+        result = broker.get_trade_result_by_balance(t["balance_before"], config.TRADE_AMOUNT)
+        risk.record_result(result, config.TRADE_AMOUNT)
+
+        direction, pair, order_id = t["direction"], t["pair"], t["order_id"]
+        if result == "win":
+            log.info("Trade WON: %s pair=%s order_id=%s", direction, pair, order_id)
+        elif result == "loss":
+            log.info("Trade LOST: %s pair=%s order_id=%s", direction, pair, order_id)
+        else:
+            log.info("Trade result unknown: %s pair=%s order_id=%s", direction, pair, order_id)
+
+        telegram_bot.send_trade_card(direction, pair, config.TRADE_AMOUNT, result, profit)
+        metrics_writer.write_metrics(metrics)
+
+        t["result"] = result
+        resolved.append(t)
+
+    pending_trades[:] = still_pending
+    return resolved
+
+
+def _maybe_continue(broker, risk, metrics, pending_trades, pending_pairs, tg, trade):
+    """After a winning trade, ride the trend with Pole Position confirmation."""
+    if trade["result"] != "win" or config.MAX_CONTINUATION_TRADES <= 0:
+        return
+    if trade["continuation_count"] >= config.MAX_CONTINUATION_TRADES:
+        return
+    if tg.is_paused():
+        return
+    can_trade, reason = risk.can_trade()
+    if not can_trade:
+        log.warning("Continuation stopped — %s", reason)
+        return
+
+    df_cont = broker.get_candles_df(pair=trade["pair"])
+    if df_cont.empty:
+        return
+    pp_dir, pp_info = strategy.pole_position_signal(df_cont)
+    log.info("Continuation check: PP=%s score=%s pair=%s",
+              pp_dir, pp_info.get("score", 0), trade["pair"])
+    if pp_dir != trade["direction"]:
+        log.info("Continuation stopped — PP no longer confirms %s", trade["direction"])
+        return
+
+    log.info("Continuation trade #%d: PP confirms %s on %s",
+              trade["continuation_count"] + 1, pp_dir, trade["pair"])
+    new_trade = _place_trade(broker, risk, metrics, pp_dir, trade["pair"],
+                              continuation_count=trade["continuation_count"] + 1)
+    if new_trade:
+        pending_trades.append(new_trade)
+        pending_pairs.add(trade["pair"])
 
 
 def _summarize(info):
