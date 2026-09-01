@@ -200,6 +200,13 @@ class TelegramController:
         self.force_scan = False
         self._lock = threading.Lock()
         self._offset = 0
+        # Dashboard control tracking
+        self._last_control_ts = 0
+        self._last_control_running = None
+        self._last_control_account = None
+        self._last_control_stake = None
+        self._control_file = os.environ.get("BOT_CONTROL_FILE", "/logs/control.json")
+        self._force_scan_file = os.environ.get("BOT_FORCE_SCAN_FILE", "/logs/force_scan.flag")
 
     def start(self):
         t = threading.Thread(target=self._listen, daemon=True)
@@ -386,3 +393,62 @@ class TelegramController:
                 self.force_scan = False
                 return True
             return False
+
+    def check_dashboard_control(self):
+        """Read the dashboard control file and apply any changes."""
+        import config
+        try:
+            with open(self._control_file, "r") as f:
+                data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+
+        # Force scan flag file (one-shot)
+        if os.path.exists(self._force_scan_file):
+            try:
+                os.remove(self._force_scan_file)
+            except OSError:
+                pass
+            with self._lock:
+                self.force_scan = True
+
+        try:
+            with open(self._control_file, "r") as f:
+                data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return
+
+        # Only apply if the timestamp changed since last check
+        ts = data.get("_ts", 0)
+        if ts == self._last_control_ts:
+            return
+        self._last_control_ts = ts
+
+        # Running / paused
+        if "running" in data:
+            should_run = bool(data["running"])
+            if should_run and self.paused:
+                with self._lock:
+                    self.paused = False
+                log.info("Dashboard: Resume requested")
+            elif not should_run and not self.paused:
+                with self._lock:
+                    self.paused = True
+                log.info("Dashboard: Pause requested")
+
+        # Account type
+        acct = data.get("account_type")
+        if acct and acct != self._last_control_account:
+            self._last_control_account = acct
+            if acct != config.ACCOUNT_TYPE:
+                config.ACCOUNT_TYPE = acct
+                with self._lock:
+                    self.need_reconnect = True
+                log.info("Dashboard: Account switch to %s", acct)
+
+        # Trade amount
+        amount = data.get("trade_amount")
+        if amount is not None and amount != self._last_control_stake:
+            self._last_control_stake = amount
+            config.TRADE_AMOUNT = float(amount)
+            log.info("Dashboard: Stake set to %s", amount)

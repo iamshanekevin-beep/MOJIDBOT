@@ -110,6 +110,21 @@ def main():
         try:
             metrics["total_cycles"] += 1
 
+            # Update live metrics from risk state for dashboard
+            metrics["consecutive_losses"] = risk.consecutive_losses
+            metrics["cooldown"] = risk.cooldown_until is not None and datetime.now(timezone.utc) < risk.cooldown_until
+            metrics["pnl_today"] = round(risk.pnl_today, 2)
+            metrics["trades_today"] = risk.trades_today
+            metrics["max_trades_per_day"] = config.MAX_TRADES_PER_DAY
+            metrics["expiration_minutes"] = config.EXPIRATION_MINUTES
+            # Fetch balance every 20 cycles (~100s) to avoid API spam
+            if metrics["total_cycles"] % 20 == 0:
+                bal = broker.get_balance()
+                if bal is not None:
+                    metrics["balance"] = round(bal, 2)
+                    metrics["balance_history"].append({"ts": datetime.now(timezone.utc).isoformat(), "balance": bal})
+                    metrics["balance_history"] = metrics["balance_history"][-100:]
+
             for pair in pairs:
                 df = broker.get_candles_df(pair=pair)
                 if df.empty:
@@ -161,7 +176,10 @@ def main():
                     metrics_writer.write_metrics(metrics)
                     continue
 
-                # Check if account switch requested via Telegram
+                # Check dashboard controls (pause, account, stake, force scan)
+                tg.check_dashboard_control()
+
+                # Check if account switch requested via Telegram or dashboard
                 if tg.check_reconnect():
                     log.info("Account switch requested — reconnecting...")
                     broker.api = None
