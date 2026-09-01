@@ -90,6 +90,7 @@ def main():
     pairs = broker.get_available_pairs()
     log.info("Scanning %d pairs: %s", len(pairs), ", ".join(pairs))
     last_candle_ts = {}  # pair -> last processed candle timestamp
+    warming_up = True  # first scan cycle observes only — no blind trades
 
     # Live metrics state
     metrics = metrics_writer.init_metrics()
@@ -142,6 +143,7 @@ def main():
                 broker.api = None
                 broker.connect()
                 pairs = broker.get_available_pairs()
+                warming_up = True
                 log.info("Reconnected on %s account. Scanning %d pairs.", config.ACCOUNT_TYPE, len(pairs))
 
             for pair in pairs:
@@ -153,6 +155,10 @@ def main():
                 if latest_ts == last_candle_ts.get(pair):
                     continue  # already processed this candle
                 last_candle_ts[pair] = latest_ts
+
+                # Warmup: observe the first candle of each pair without trading
+                if warming_up:
+                    continue
 
                 direction, info = strategy.get_signal(df)
 
@@ -253,6 +259,10 @@ def main():
 
                 metrics_writer.write_metrics(metrics)
 
+            if warming_up:
+                warming_up = False
+                log.info("Warmup complete — now watching for confirmed signals.")
+
             if tg.check_force_scan():
                 continue  # skip sleep, scan immediately
             time.sleep(config.POLL_SECONDS)
@@ -265,6 +275,7 @@ def main():
                     broker.api = None
                     broker.connect()
                     pairs = broker.get_available_pairs()
+                    warming_up = True
                     log.info("Reconnected. Scanning %d pairs: %s", len(pairs), ", ".join(pairs))
                     break
                 except Exception as e2:
