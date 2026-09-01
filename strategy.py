@@ -124,11 +124,13 @@ def get_signal(df):
     if config.STRATEGY == "POLE_POSITION":
         return pole_position_signal(df)
 
-    # BOTH: require agreement
+    # BOTH: FCB breakout triggers, Pole Position confirms before execution.
     fcb_dir, fcb_info = fcb_signal(df)
     pole_dir, pole_info = pole_position_signal(df)
 
     info = {"fcb": fcb_info, "pole_position": pole_info}
     if fcb_dir is not None and fcb_dir == pole_dir:
         return fcb_dir, info
+    if fcb_dir is not None:
+        info["reason"] = f"FCB breakout [{fcb_dir}] but Pole Position not confirmed (score={pole_info.get('score', 0)})"
     return None, info
