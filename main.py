@@ -352,8 +352,8 @@ def _resolve_pending(broker, risk, metrics, pending_trades, tg):
 
 
 def _maybe_continue(broker, risk, metrics, pending_trades, pending_pairs, tg, trade):
-    """After a winning trade, ride the trend with Pole Position confirmation.
-    Continues until a loss is encountered or PP no longer confirms."""
+    """After a winning trade, continue only on a fresh clean breakout with PP alignment.
+    Continues until a loss is encountered, PP no longer aligns, or no fresh breakout."""
     if trade["result"] != "win":
         return
     if tg.is_paused():
@@ -366,16 +366,28 @@ def _maybe_continue(broker, risk, metrics, pending_trades, pending_pairs, tg, tr
     df_cont = broker.get_candles_df(pair=trade["pair"])
     if df_cont.empty:
         return
-    pp_dir, pp_info = strategy.pole_position_signal(df_cont)
-    log.info("Continuation check: PP=%s score=%s pair=%s",
-              pp_dir, pp_info.get("score", 0), trade["pair"])
-    if pp_dir != trade["direction"]:
-        log.info("Continuation stopped — PP no longer confirms %s", trade["direction"])
+
+    # Require a fresh clean FCB breakout in the same direction
+    fcb_dir, fcb_info = strategy.fcb_signal(df_cont)
+    if fcb_dir != trade["direction"]:
+        log.info("Continuation stopped — no fresh clean breakout for %s. pair=%s", trade["direction"], trade["pair"])
         return
 
-    log.info("Continuation trade #%d: PP confirms %s on %s",
-              trade["continuation_count"] + 1, pp_dir, trade["pair"])
-    new_trade = _place_trade(broker, risk, metrics, pp_dir, trade["pair"],
+    # Require PP to align with the breakout direction
+    pp_dir, pp_info = strategy.pole_position_signal(df_cont)
+    pp_score = pp_info.get("score", 0)
+    log.info("Continuation check: FCB=%s PP=%s score=%s pair=%s",
+              fcb_dir, pp_dir, pp_score, trade["pair"])
+    if fcb_dir == "CALL" and pp_score <= 0:
+        log.info("Continuation stopped — PP not aligned bullish (score=%s). pair=%s", pp_score, trade["pair"])
+        return
+    if fcb_dir == "PUT" and pp_score >= 0:
+        log.info("Continuation stopped — PP not aligned bearish (score=%s). pair=%s", pp_score, trade["pair"])
+        return
+
+    log.info("Continuation trade #%d: fresh breakout %s + PP aligned (score=%s) on %s",
+              trade["continuation_count"] + 1, fcb_dir, pp_score, trade["pair"])
+    new_trade = _place_trade(broker, risk, metrics, fcb_dir, trade["pair"],
                               continuation_count=trade["continuation_count"] + 1)
     if new_trade:
         pending_trades.append(new_trade)
