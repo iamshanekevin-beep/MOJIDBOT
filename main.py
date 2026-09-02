@@ -206,17 +206,17 @@ def main():
                 pp_dir, pp_info = strategy.pole_position_signal(df)
                 pp_score = pp_info.get("score", 0)
                 info["sentiment_score"] = pp_score
-                if direction == "CALL" and pp_score <= 0:
-                    log.info("Sentiment: FCB=CALL but PP score=%s (not bullish) — skipping trade. pair=%s", pp_score, pair)
+                if direction == "CALL" and pp_score <= -2:
+                    log.info("Sentiment: FCB=CALL but PP score=%s (strongly bearish) — skipping trade. pair=%s", pp_score, pair)
                     metrics["no_signal_count"] += 1
                     metrics_writer.write_metrics(metrics)
                     continue
-                if direction == "PUT" and pp_score >= 0:
-                    log.info("Sentiment: FCB=PUT but PP score=%s (not bearish) — skipping trade. pair=%s", pp_score, pair)
+                if direction == "PUT" and pp_score >= 2:
+                    log.info("Sentiment: FCB=PUT but PP score=%s (strongly bullish) — skipping trade. pair=%s", pp_score, pair)
                     metrics["no_signal_count"] += 1
                     metrics_writer.write_metrics(metrics)
                     continue
-                log.info("Sentiment confirmed: FCB=%s PP score=%s — weight aligned. pair=%s", direction, pp_score, pair)
+                log.info("Sentiment OK: FCB=%s PP score=%s — sentiment not strongly against. pair=%s", direction, pp_score, pair)
 
                 # Telegram styled signal card
                 telegram_bot.send_signal_card(direction, pair, info)
