@@ -28,19 +28,11 @@ def fcb_signal(df):
     if pd.isna(up) or pd.isna(low) or pd.isna(prev_up) or pd.isna(prev_low):
         return None, {"reason": "bands not yet confirmed"}
 
-    # Clean FCB breakout only:
-    #   1. Previous candle closed INSIDE the bands
-    #   2. Current candle closes OUTSIDE the band (strictly beyond, not just touching)
-    was_inside = prev_low <= prev_price <= prev_up
-
-    if price > up and was_inside:
-        return "CALL", {"price": price, "upper_band": up, "lower_band": low}
-    if price < low and was_inside:
-        return "PUT", {"price": price, "upper_band": up, "lower_band": low}
+    # FCB breakout: price closes outside the band.
     if price > up:
-        return None, {"price": price, "upper_band": up, "lower_band": low, "reason": "above band but not a clean breakout"}
+        return "CALL", {"price": price, "upper_band": up, "lower_band": low}
     if price < low:
-        return None, {"price": price, "upper_band": up, "lower_band": low, "reason": "below band but not a clean breakout"}
+        return "PUT", {"price": price, "upper_band": up, "lower_band": low}
     return None, {"price": price, "upper_band": up, "lower_band": low, "reason": "inside bands"}
 
 
