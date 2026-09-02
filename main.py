@@ -61,7 +61,7 @@ class RiskState:
         elif result == "loss":
             self.consecutive_losses += 1
             self.pnl_today -= amount
-            if self.consecutive_losses >= config.MAX_CONSECUTIVE_LOSSES:
+            if self.consecutive_losses >= config.MAX_CONSECUTIVE_LOSSES and config.COOLDOWN_MINUTES > 0:
                 self.cooldown_until = datetime.now(timezone.utc) + timedelta(minutes=config.COOLDOWN_MINUTES)
                 log.warning("Hit %d consecutive losses — %d-minute cooldown started. Bot keeps hunting.",
                            config.MAX_CONSECUTIVE_LOSSES, config.COOLDOWN_MINUTES)
