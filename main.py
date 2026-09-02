@@ -200,23 +200,22 @@ def main():
                 log.info("Signal: %s | pair=%s | %s", direction, pair, _summarize(info))
 
                 # ── Trade sentiment check ────────────────────────────────────
-                # Before opening a trade, check where the market weight is
-                # falling.  Pole Position score must lean the same way as the
-                # FCB signal:  score > 0 for CALL, score < 0 for PUT.
+                # Pole Position must ALIGN with the FCB signal direction:
+                #   pp_score > 0 for CALL, pp_score < 0 for PUT.
                 pp_dir, pp_info = strategy.pole_position_signal(df)
                 pp_score = pp_info.get("score", 0)
                 info["sentiment_score"] = pp_score
-                if direction == "CALL" and pp_score <= -2:
-                    log.info("Sentiment: FCB=CALL but PP score=%s (strongly bearish) — skipping trade. pair=%s", pp_score, pair)
+                if direction == "CALL" and pp_score <= 0:
+                    log.info("Sentiment: FCB=CALL but PP score=%s (not aligned bullish) — skipping trade. pair=%s", pp_score, pair)
                     metrics["no_signal_count"] += 1
                     metrics_writer.write_metrics(metrics)
                     continue
-                if direction == "PUT" and pp_score >= 2:
-                    log.info("Sentiment: FCB=PUT but PP score=%s (strongly bullish) — skipping trade. pair=%s", pp_score, pair)
+                if direction == "PUT" and pp_score >= 0:
+                    log.info("Sentiment: FCB=PUT but PP score=%s (not aligned bearish) — skipping trade. pair=%s", pp_score, pair)
                     metrics["no_signal_count"] += 1
                     metrics_writer.write_metrics(metrics)
                     continue
-                log.info("Sentiment OK: FCB=%s PP score=%s — sentiment not strongly against. pair=%s", direction, pp_score, pair)
+                log.info("Sentiment OK: FCB=%s PP score=%s — aligned. pair=%s", direction, pp_score, pair)
 
                 # Telegram styled signal card
                 telegram_bot.send_signal_card(direction, pair, info)
@@ -353,10 +352,9 @@ def _resolve_pending(broker, risk, metrics, pending_trades, tg):
 
 
 def _maybe_continue(broker, risk, metrics, pending_trades, pending_pairs, tg, trade):
-    """After a winning trade, ride the trend with Pole Position confirmation."""
-    if trade["result"] != "win" or config.MAX_CONTINUATION_TRADES <= 0:
-        return
-    if trade["continuation_count"] >= config.MAX_CONTINUATION_TRADES:
+    """After a winning trade, ride the trend with Pole Position confirmation.
+    Continues until a loss is encountered or PP no longer confirms."""
+    if trade["result"] != "win":
         return
     if tg.is_paused():
         return
