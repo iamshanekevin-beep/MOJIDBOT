@@ -29,16 +29,13 @@ def fcb_signal(df):
         return None, {"reason": "bands not yet confirmed"}
 
     # Clean FCB breakout only:
-    #   1. Previous candle closed clearly INSIDE the bands (not at the edge)
-    #   2. Current candle closes clearly OUTSIDE the band (not just touching it)
-    # A small buffer (5% of band width) avoids triggering on marginal touches.
-    band_width = abs(up - low)
-    buffer = band_width * 0.05 if band_width > 0 else 0
-    was_inside = (prev_low + buffer) <= prev_price <= (prev_up - buffer)
+    #   1. Previous candle closed INSIDE the bands
+    #   2. Current candle closes OUTSIDE the band (strictly beyond, not just touching)
+    was_inside = prev_low <= prev_price <= prev_up
 
-    if price > up + buffer and was_inside:
+    if price > up and was_inside:
         return "CALL", {"price": price, "upper_band": up, "lower_band": low}
-    if price < low - buffer and was_inside:
+    if price < low and was_inside:
         return "PUT", {"price": price, "upper_band": up, "lower_band": low}
     if price > up:
         return None, {"price": price, "upper_band": up, "lower_band": low, "reason": "above band but not a clean breakout"}
