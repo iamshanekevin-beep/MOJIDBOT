@@ -157,6 +157,26 @@ def main():
                 if config.AUTO_TRADE:
                     _maybe_continue(broker, risk, metrics, pending_trades, pending_pairs, tg, t)
 
+            # Sync active (pending) trades to metrics for the dashboard
+            now_ts = time.time()
+            metrics["active_trades"] = [
+                {
+                    "pair": t["pair"],
+                    "direction": t["direction"],
+                    "order_id": str(t["order_id"]),
+                    "amount": config.TRADE_AMOUNT,
+                    "opened_at": next(
+                        (te.get("ts") for te in metrics["placed_trades"]
+                         if te.get("order_id") == str(t["order_id"])),
+                        datetime.now(timezone.utc).isoformat(),
+                    ),
+                    "expires_at": t["expires_at"],
+                    "seconds_remaining": max(0, int(t["expires_at"] - now_ts)),
+                    "continuation": t.get("continuation_count", 0),
+                }
+                for t in pending_trades
+            ]
+
             for pair in pairs:
                 df = broker.get_candles_df(pair=pair)
                 if df.empty:
@@ -291,10 +311,13 @@ def _place_trade(broker, risk, metrics, direction, pair, continuation_count=0):
         return None
 
     metrics["trades_placed"] += 1
+    now_ts = datetime.now(timezone.utc).isoformat()
     trade_entry = {
         "pair": pair, "direction": direction, "amount": config.TRADE_AMOUNT,
-        "order_id": str(order_id), "status": "placed",
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "order_id": str(order_id), "status": "pending",
+        "ts": now_ts,
+        "expires_at": time.time() + WAIT_SECS,
+        "continuation": continuation_count,
     }
     metrics["last_trade"] = trade_entry
     metrics["trade_history"].append(trade_entry)
@@ -342,9 +365,30 @@ def _resolve_pending(broker, risk, metrics, pending_trades, tg):
             log.info("Trade result unknown: %s pair=%s order_id=%s", direction, pair, order_id)
 
         telegram_bot.send_trade_card(direction, pair, config.TRADE_AMOUNT, result, profit)
+
+        # Update the trade entry in metrics with the final result
+        order_id_str = str(order_id)
+        for trade_list in (metrics["placed_trades"], metrics["trade_history"]):
+            for te in trade_list:
+                if te.get("order_id") == order_id_str and te.get("status") == "pending":
+                    te["status"] = result
+                    te["profit"] = round(profit, 2) if profit is not None else None
+                    te["closed_at"] = datetime.now(timezone.utc).isoformat()
+
+        # Update aggregate counters
+        if result == "win":
+            metrics["wins"] = metrics.get("wins", 0) + 1
+        elif result == "loss":
+            metrics["losses"] = metrics.get("losses", 0) + 1
+        else:
+            metrics["unknown_results"] = metrics.get("unknown_results", 0) + 1
+        if profit is not None:
+            metrics["pnl_total"] = round(metrics.get("pnl_total", 0.0) + profit, 2)
+
         metrics_writer.write_metrics(metrics)
 
         t["result"] = result
+        t["profit"] = profit
         resolved.append(t)
 
     pending_trades[:] = still_pending
