@@ -9,6 +9,7 @@ calls start failing, this is the file to check/patch first.
 Install: pip install iqoptionapi
 """
 import logging
+import threading
 import time
 
 import pandas as pd
@@ -19,6 +20,26 @@ import config
 log = logging.getLogger("broker")
 
 
+def _connect_with_timeout(connect_fn, timeout=30):
+    """Run connect_fn in a thread; raise ConnectionError if it doesn't finish in time."""
+    result = {}
+    def worker():
+        try:
+            result["value"] = connect_fn()
+        except Exception as e:
+            result["error"] = e
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    t.join(timeout=timeout)
+    if t.is_alive():
+        raise ConnectionError(
+            f"IQ Option connect() hung for {timeout}s — SSL handshake timeout (likely IP rate-limited)"
+        )
+    if "error" in result:
+        raise result["error"]
+    return result.get("value")
+
+
 class Broker:
     def __init__(self):
         self.api = None
@@ -27,8 +48,11 @@ class Broker:
         self.active_pair = None
 
     def connect(self):
-        self.api = IQ_Option(config.IQ_EMAIL, config.IQ_PASSWORD)
-        check, reason = self.api.connect()
+        def _do_connect():
+            self.api = IQ_Option(config.IQ_EMAIL, config.IQ_PASSWORD)
+            return self.api.connect()
+
+        check, reason = _connect_with_timeout(_do_connect, timeout=30)
         if not check:
             raise ConnectionError(f"IQ Option login failed: {reason}")
 
