@@ -3,7 +3,6 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import config
-import strategy
 from broker import Broker
 from notifier import notify
 import metrics_writer
@@ -200,8 +199,8 @@ def main():
 
                 if pending_breakout:
                     direction = pending_breakout
-                    pp_dir, pp_info = strategy.pole_position_signal(df)
-                    pp_score = pp_info.get("score", 0)
+                    pp_dir, pp_info = None, {"score": 0}
+                    pp_score = 0
                     info = {"breakout": direction, "sentiment_score": pp_score}
 
                     if direction == "CALL" and pp_score <= 0:
@@ -218,7 +217,7 @@ def main():
                 else:
                     # ── Check for new clean full-body FCB breakout ──────────
                     # Detect only — don't trade yet.  Wait for next candle.
-                    fcb_dir, fcb_info = strategy.fcb_signal(df)
+                    fcb_dir, fcb_info = None, {}
                     if fcb_dir is not None:
                         breakout_pending[pair] = fcb_dir
                         log.info("FCB full-body breakout: %s — waiting for next candle + sentiment. pair=%s", fcb_dir, pair)
@@ -423,14 +422,14 @@ def _maybe_continue(broker, risk, metrics, pending_trades, pending_pairs, tg, tr
         return
 
     # Require a fresh clean FCB breakout in the same direction
-    fcb_dir, fcb_info = strategy.fcb_signal(df_cont)
+    fcb_dir, fcb_info = None, {}
     if fcb_dir != trade["direction"]:
         log.info("Continuation stopped — no fresh clean breakout for %s. pair=%s", trade["direction"], trade["pair"])
         return
 
     # Require PP to align with the breakout direction
-    pp_dir, pp_info = strategy.pole_position_signal(df_cont)
-    pp_score = pp_info.get("score", 0)
+    pp_dir, pp_info = None, {"score": 0}
+    pp_score = 0
     log.info("Continuation check: FCB=%s PP=%s score=%s pair=%s",
               fcb_dir, pp_dir, pp_score, trade["pair"])
     if fcb_dir == "CALL" and pp_score <= 0:
