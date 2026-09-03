@@ -90,6 +90,7 @@ def main():
     pairs = broker.get_available_pairs()
     log.info("Scanning %d pairs: %s", len(pairs), ", ".join(pairs))
     last_candle_ts = {}  # pair -> last processed candle timestamp
+    breakout_pending = {}  # pair -> breakout direction detected on previous candle
     warming_up = True  # first scan cycle observes only — no blind trades
 
     # Live metrics state
@@ -191,11 +192,39 @@ def main():
                 if warming_up:
                     continue
 
-                direction, info = strategy.get_signal(df)
+                # ── Pending breakout from previous candle → trade this candle ──
+                # A clean full-body FCB breakout was detected on the previous
+                # candle.  We wait for the NEXT candle to open, then confirm
+                # direction via Pole Position sentiment before placing a trade.
+                pending_breakout = breakout_pending.pop(pair, None)
 
-                if direction is None:
-                    metrics["no_signal_count"] += 1
-                    log.info("No signal. pair=%s %s", pair, _summarize(info))
+                if pending_breakout:
+                    direction = pending_breakout
+                    pp_dir, pp_info = strategy.pole_position_signal(df)
+                    pp_score = pp_info.get("score", 0)
+                    info = {"breakout": direction, "sentiment_score": pp_score}
+
+                    if direction == "CALL" and pp_score <= 0:
+                        log.info("Sentiment: breakout=CALL but PP score=%s (not aligned) — skipping. pair=%s", pp_score, pair)
+                        metrics["no_signal_count"] += 1
+                        metrics_writer.write_metrics(metrics)
+                        continue
+                    if direction == "PUT" and pp_score >= 0:
+                        log.info("Sentiment: breakout=PUT but PP score=%s (not aligned) — skipping. pair=%s", pp_score, pair)
+                        metrics["no_signal_count"] += 1
+                        metrics_writer.write_metrics(metrics)
+                        continue
+                    log.info("Breakout confirmed on next candle: %s | PP score=%s | pair=%s", direction, pp_score, pair)
+                else:
+                    # ── Check for new clean full-body FCB breakout ──────────
+                    # Detect only — don't trade yet.  Wait for next candle.
+                    fcb_dir, fcb_info = strategy.fcb_signal(df)
+                    if fcb_dir is not None:
+                        breakout_pending[pair] = fcb_dir
+                        log.info("FCB full-body breakout: %s — waiting for next candle + sentiment. pair=%s", fcb_dir, pair)
+                    else:
+                        metrics["no_signal_count"] += 1
+                        log.info("No signal. pair=%s %s", pair, _summarize(fcb_info))
                     metrics_writer.write_metrics(metrics)
                     continue
 
@@ -218,24 +247,6 @@ def main():
                 metrics["signal_history"] = metrics["signal_history"][-50:]
 
                 log.info("Signal: %s | pair=%s | %s", direction, pair, _summarize(info))
-
-                # ── Trade sentiment check ────────────────────────────────────
-                # Pole Position must ALIGN with the FCB signal direction:
-                #   pp_score > 0 for CALL, pp_score < 0 for PUT.
-                pp_dir, pp_info = strategy.pole_position_signal(df)
-                pp_score = pp_info.get("score", 0)
-                info["sentiment_score"] = pp_score
-                if direction == "CALL" and pp_score <= 0:
-                    log.info("Sentiment: FCB=CALL but PP score=%s (not aligned bullish) — skipping trade. pair=%s", pp_score, pair)
-                    metrics["no_signal_count"] += 1
-                    metrics_writer.write_metrics(metrics)
-                    continue
-                if direction == "PUT" and pp_score >= 0:
-                    log.info("Sentiment: FCB=PUT but PP score=%s (not aligned bearish) — skipping trade. pair=%s", pp_score, pair)
-                    metrics["no_signal_count"] += 1
-                    metrics_writer.write_metrics(metrics)
-                    continue
-                log.info("Sentiment OK: FCB=%s PP score=%s — aligned. pair=%s", direction, pp_score, pair)
 
                 # Telegram styled signal card
                 telegram_bot.send_signal_card(direction, pair, info)
