@@ -9,35 +9,90 @@ calls start failing, this is the file to check/patch first.
 Install: pip install iqoptionapi
 """
 import logging
-import threading
+import socket
+import ssl as _ssl
+import threading as _threading
 import time
+import time as _time
 
 import pandas as pd
 from iqoptionapi.stable_api import IQ_Option
+from iqoptionapi import global_value as _gv
+from iqoptionapi.api import IQOptionAPI as _IQOptionAPI, WebsocketClient as _WSC
 
 import config
 
 log = logging.getLogger("broker")
 
+# ── Monkey-patch iqoptionapi to prevent connection hangs ──────────────
+# The library has no timeout on its WebSocket while-True loop or on the
+# HTTP login request.  If IQ Option's server doesn't respond, the bot
+# hangs forever.  These patches add deadlines so the bot can retry.
+# ─────────────────────────────────────────────────────────────────────
+
+# 1. HTTP login: inject a timeout into session.request()
+_orig_send_http_v2 = _IQOptionAPI.send_http_request_v2
+
+def _patched_send_http_v2(self, url, method, data=None, params=None, headers=None):
+    _orig = self.session.request
+    def _request_with_timeout(*a, **kw):
+        if not kw.get("timeout"):
+            kw["timeout"] = 15
+        return _orig(*a, **kw)
+    self.session.request = _request_with_timeout
+    try:
+        return _orig_send_http_v2(self, url, method, data, params, headers)
+    finally:
+        self.session.request = _orig
+
+_IQOptionAPI.send_http_request_v2 = _patched_send_http_v2
+
+# 2. WebSocket connect: add a deadline to the while-True spin loop
+_orig_start_websocket = _IQOptionAPI.start_websocket
+
+def _patched_start_websocket(self, timeout=20):
+    _gv.check_websocket_if_connect = None
+    _gv.check_websocket_if_error = False
+    _gv.websocket_error_reason = None
+    self.websocket_client = _WSC(self)
+    self.websocket_thread = _threading.Thread(
+        target=self.websocket.run_forever,
+        kwargs={"sslopt": {"check_hostname": False, "cert_reqs": _ssl.CERT_NONE, "ca_certs": "cacert.pem"}},
+    )
+    self.websocket_thread.daemon = True
+    self.websocket_thread.start()
+    deadline = _time.time() + timeout
+    while True:
+        if _gv.check_websocket_if_error:
+            return False, _gv.websocket_error_reason
+        if _gv.check_websocket_if_connect == 0:
+            return False, "Websocket connection closed."
+        elif _gv.check_websocket_if_connect == 1:
+            return True, None
+        if _time.time() > deadline:
+            return False, f"WebSocket connection timed out ({timeout}s)"
+
+_IQOptionAPI.start_websocket = _patched_start_websocket
+
 
 def _connect_with_timeout(connect_fn, timeout=30):
-    """Run connect_fn in a thread; raise ConnectionError if it doesn't finish in time."""
-    result = {}
-    def worker():
-        try:
-            result["value"] = connect_fn()
-        except Exception as e:
-            result["error"] = e
-    t = threading.Thread(target=worker, daemon=True)
-    t.start()
-    t.join(timeout=timeout)
-    if t.is_alive():
+    """Run connect_fn with a socket-level timeout so SSL handshakes can't hang forever.
+
+    The threading-based approach doesn't work because the SSL handshake runs in a
+    C extension that holds the GIL — the timeout thread can't run to check elapsed
+    time.  Setting socket.setdefaulttimeout forces the OS to interrupt the socket
+    call at the C level, which releases the GIL and lets Python raise socket.timeout.
+    """
+    old_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(timeout)
+    try:
+        return connect_fn()
+    except (socket.timeout, TimeoutError) as e:
         raise ConnectionError(
-            f"IQ Option connect() hung for {timeout}s — SSL handshake timeout (likely IP rate-limited)"
+            f"IQ Option connect() timed out after {timeout}s — SSL handshake timeout (likely IP rate-limited)"
         )
-    if "error" in result:
-        raise result["error"]
-    return result.get("value")
+    finally:
+        socket.setdefaulttimeout(old_timeout)
 
 
 class Broker:

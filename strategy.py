@@ -28,23 +28,31 @@ def fcb_signal(df):
     if pd.isna(up) or pd.isna(low) or pd.isna(prev_up) or pd.isna(prev_low):
         return None, {"reason": "bands not yet confirmed"}
 
-    # Clean FCB breakout — full candlestick body beyond the band:
+    # Clean FCB breakout — candle decisively closes beyond the band:
     #   1. Previous candle closed INSIDE the bands
-    #   2. Current candle's ENTIRE body (open AND close) is beyond the band
+    #   2. Current candle CLOSES beyond the band (not just wicking through)
     #   3. Candle body confirms direction (close > open for CALL, close < open for PUT)
+    #   4. Breakout penetration >= 20% of band width (filters weak breakouts)
     was_inside = prev_low <= prev_price <= prev_up
+    band_width = up - low if up > low else 0
     open_price = df["open"].iloc[-1]
 
-    if price > up and open_price > up and was_inside:
+    if price > up and was_inside:
         if price <= open_price:
             return None, {"price": price, "upper_band": up, "lower_band": low, "reason": "breakout but bearish candle body"}
+        if band_width > 0 and (price - up) < 0.2 * band_width:
+            return None, {"price": price, "upper_band": up, "lower_band": low, "reason": "breakout too weak (< 20% band width)"}
         return "CALL", {"price": price, "upper_band": up, "lower_band": low}
-    if price < low and open_price < low and was_inside:
+    if price < low and was_inside:
         if price >= open_price:
             return None, {"price": price, "upper_band": up, "lower_band": low, "reason": "breakout but bullish candle body"}
+        if band_width > 0 and (low - price) < 0.2 * band_width:
+            return None, {"price": price, "upper_band": up, "lower_band": low, "reason": "breakout too weak (< 20% band width)"}
         return "PUT", {"price": price, "upper_band": up, "lower_band": low}
-    if price > up or price < low:
-        return None, {"price": price, "upper_band": up, "lower_band": low, "reason": "price beyond band but not a full body breakout"}
+    if price > up:
+        return None, {"price": price, "upper_band": up, "lower_band": low, "reason": "above band but not a clean breakout"}
+    if price < low:
+        return None, {"price": price, "upper_band": up, "lower_band": low, "reason": "below band but not a clean breakout"}
     return None, {"price": price, "upper_band": up, "lower_band": low, "reason": "inside bands"}
 
 
