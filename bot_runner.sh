@@ -5,6 +5,7 @@
 set -e
 
 STALE_TIMEOUT="${STALE_TIMEOUT:-180}"   # 3 minutes with no log = hung
+ERROR_STREAK_LIMIT="${ERROR_STREAK_LIMIT:-10}"  # too many consecutive errors = stuck
 LOG_FILE="${BOT_LOG_FILE:-/logs/bot.log}"
 
 mkdir -p "$(dirname "$LOG_FILE")"
@@ -13,7 +14,7 @@ mkdir -p "$(dirname "$LOG_FILE")"
 python -u main.py > "$LOG_FILE" 2>&1 &
 BOT_PID=$!
 
-echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [WATCHDOG] Started bot (pid=$BOT_PID), stale timeout=${STALE_TIMEOUT}s" >> "$LOG_FILE"
+echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [WATCHDOG] Started bot (pid=$BOT_PID), stale timeout=${STALE_TIMEOUT}s, error streak limit=${ERROR_STREAK_LIMIT}" >> "$LOG_FILE"
 
 # Watchdog loop — runs while the bot process is alive.
 while kill -0 "$BOT_PID" 2>/dev/null; do
@@ -24,6 +25,13 @@ while kill -0 "$BOT_PID" 2>/dev/null; do
         DIFF=$((NOW - LAST_MOD))
         if [ "$DIFF" -gt "$STALE_TIMEOUT" ]; then
             echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [WATCHDOG] Bot hung (no log for ${DIFF}s) — killing for restart" >> "$LOG_FILE"
+            kill -9 "$BOT_PID" 2>/dev/null || true
+            exit 1
+        fi
+        # Detect error loops: if the last N lines are all errors/warnings, the bot is stuck
+        ERROR_STREAK=$(tail -n "$ERROR_STREAK_LIMIT" "$LOG_FILE" 2>/dev/null | grep -c '\[ERROR\]\|\[WARNING\]')
+        if [ "$ERROR_STREAK" -ge "$ERROR_STREAK_LIMIT" ]; then
+            echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [WATCHDOG] Bot stuck in error loop (${ERROR_STREAK} consecutive errors) — killing for restart" >> "$LOG_FILE"
             kill -9 "$BOT_PID" 2>/dev/null || true
             exit 1
         fi
