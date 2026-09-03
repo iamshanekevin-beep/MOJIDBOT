@@ -26,7 +26,7 @@ def _get_int(key, default):
 # --- IQ Option account ---
 IQ_EMAIL = os.getenv("IQ_EMAIL", "")
 IQ_PASSWORD = os.getenv("IQ_PASSWORD", "")
-ACCOUNT_TYPE = os.getenv("ACCOUNT_TYPE", "PRACTICE")  # PRACTICE or REAL — start on PRACTICE
+ACCOUNT_TYPE = os.getenv("ACCOUNT_TYPE", "PRACTICE").upper()  # PRACTICE or REAL — start on PRACTICE
 
 # --- Market / instrument ---
 PAIR = os.getenv("PAIR", "EURUSD-OTC")
