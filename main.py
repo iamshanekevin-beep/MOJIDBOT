@@ -3,6 +3,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 import config
+import strategy
 from broker import Broker
 from notifier import notify
 import metrics_writer
@@ -88,8 +89,8 @@ def main():
 
     pairs = broker.get_available_pairs()
     log.info("Scanning %d pairs: %s", len(pairs), ", ".join(pairs))
+    broker.start_mood_streams(pairs)
     last_candle_ts = {}  # pair -> last processed candle timestamp
-    breakout_pending = {}  # pair -> breakout direction detected on previous candle
     warming_up = True  # first scan cycle observes only — no blind trades
 
     # Live metrics state
@@ -147,6 +148,7 @@ def main():
                 broker.api = None
                 broker.connect()
                 pairs = broker.get_available_pairs()
+                broker.start_mood_streams(pairs)
                 warming_up = True
                 log.info("Reconnected on %s account. Scanning %d pairs.", config.ACCOUNT_TYPE, len(pairs))
 
@@ -191,39 +193,12 @@ def main():
                 if warming_up:
                     continue
 
-                # ── Pending breakout from previous candle → trade this candle ──
-                # A clean full-body FCB breakout was detected on the previous
-                # candle.  We wait for the NEXT candle to open, then confirm
-                # direction via Pole Position sentiment before placing a trade.
-                pending_breakout = breakout_pending.pop(pair, None)
-
-                if pending_breakout:
-                    direction = pending_breakout
-                    pp_dir, pp_info = None, {"score": 0}
-                    pp_score = 0
-                    info = {"breakout": direction, "sentiment_score": pp_score}
-
-                    if direction == "CALL" and pp_score <= 0:
-                        log.info("Sentiment: breakout=CALL but PP score=%s (not aligned) — skipping. pair=%s", pp_score, pair)
-                        metrics["no_signal_count"] += 1
-                        metrics_writer.write_metrics(metrics)
-                        continue
-                    if direction == "PUT" and pp_score >= 0:
-                        log.info("Sentiment: breakout=PUT but PP score=%s (not aligned) — skipping. pair=%s", pp_score, pair)
-                        metrics["no_signal_count"] += 1
-                        metrics_writer.write_metrics(metrics)
-                        continue
-                    log.info("Breakout confirmed on next candle: %s | PP score=%s | pair=%s", direction, pp_score, pair)
-                else:
-                    # ── Check for new clean full-body FCB breakout ──────────
-                    # Detect only — don't trade yet.  Wait for next candle.
-                    fcb_dir, fcb_info = None, {}
-                    if fcb_dir is not None:
-                        breakout_pending[pair] = fcb_dir
-                        log.info("FCB full-body breakout: %s — waiting for next candle + sentiment. pair=%s", fcb_dir, pair)
-                    else:
-                        metrics["no_signal_count"] += 1
-                        log.info("No signal. pair=%s %s", pair, _summarize(fcb_info))
+                # ── Wick rejection + confirmation layer (all pairs, 1m) ──
+                mood = broker.get_traders_mood(pair)
+                direction, info = strategy.get_signal(df, mood_value=mood)
+                if direction is None:
+                    metrics["no_signal_count"] += 1
+                    log.info("No signal. pair=%s %s", pair, _summarize(info))
                     metrics_writer.write_metrics(metrics)
                     continue
 
@@ -299,6 +274,7 @@ def main():
                     broker.api = None
                     broker.connect()
                     pairs = broker.get_available_pairs()
+                    broker.start_mood_streams(pairs)
                     warming_up = True
                     log.info("Reconnected. Scanning %d pairs: %s", len(pairs), ", ".join(pairs))
                     break
@@ -421,27 +397,17 @@ def _maybe_continue(broker, risk, metrics, pending_trades, pending_pairs, tg, tr
     if df_cont.empty:
         return
 
-    # Require a fresh clean FCB breakout in the same direction
-    fcb_dir, fcb_info = None, {}
-    if fcb_dir != trade["direction"]:
-        log.info("Continuation stopped — no fresh clean breakout for %s. pair=%s", trade["direction"], trade["pair"])
+    # Require a fresh wick rejection + all confirmations in the same direction
+    mood = broker.get_traders_mood(trade["pair"])
+    direction, info = strategy.get_signal(df_cont, mood_value=mood)
+    if direction != trade["direction"]:
+        log.info("Continuation stopped — no fresh confirmed signal for %s. pair=%s",
+                 trade["direction"], trade["pair"])
         return
 
-    # Require PP to align with the breakout direction
-    pp_dir, pp_info = None, {"score": 0}
-    pp_score = 0
-    log.info("Continuation check: FCB=%s PP=%s score=%s pair=%s",
-              fcb_dir, pp_dir, pp_score, trade["pair"])
-    if fcb_dir == "CALL" and pp_score <= 0:
-        log.info("Continuation stopped — PP not aligned bullish (score=%s). pair=%s", pp_score, trade["pair"])
-        return
-    if fcb_dir == "PUT" and pp_score >= 0:
-        log.info("Continuation stopped — PP not aligned bearish (score=%s). pair=%s", pp_score, trade["pair"])
-        return
-
-    log.info("Continuation trade #%d: fresh breakout %s + PP aligned (score=%s) on %s",
-              trade["continuation_count"] + 1, fcb_dir, pp_score, trade["pair"])
-    new_trade = _place_trade(broker, risk, metrics, fcb_dir, trade["pair"],
+    log.info("Continuation trade #%d: fresh wick rejection %s + confirmations on %s",
+              trade["continuation_count"] + 1, direction, trade["pair"])
+    new_trade = _place_trade(broker, risk, metrics, direction, trade["pair"],
                               continuation_count=trade["continuation_count"] + 1)
     if new_trade:
         pending_trades.append(new_trade)

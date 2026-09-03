@@ -285,6 +285,21 @@ class Broker:
         except Exception as e:
             return False, f"digital spot buy failed: {e}"
 
+    def start_mood_streams(self, pairs):
+        """Subscribe to trader-sentiment streams for all tradeable pairs."""
+        for pair in pairs:
+            try:
+                self.api.start_mood_stream(pair)
+            except Exception:
+                pass  # mood not available for this pair — sentiment check will allow
+
+    def get_traders_mood(self, pair):
+        """Return the fraction of traders going 'Higher' (0-1) or None."""
+        try:
+            return self.api.get_traders_mood(pair)
+        except Exception:
+            return None
+
     def get_balance(self):
         """Get current account balance."""
         try:
