@@ -48,16 +48,34 @@ def _patched_send_http_v2(self, url, method, data=None, params=None, headers=Non
 _IQOptionAPI.send_http_request_v2 = _patched_send_http_v2
 
 # 2. WebSocket connect: add a deadline to the while-True spin loop
+#    Also pass proxy params to run_forever when IQ_PROXY is configured.
+from urllib.parse import urlparse as _urlparse
+
 _orig_start_websocket = _IQOptionAPI.start_websocket
+
+def _ws_proxy_kwargs():
+    """Build websocket-client run_forever proxy kwargs from config.IQ_PROXY."""
+    if not config.IQ_PROXY:
+        return {}
+    p = _urlparse(config.IQ_PROXY)
+    scheme = p.scheme or "http"
+    host = p.hostname
+    port = p.port or (1080 if "socks" in scheme else 8080)
+    kw = {"http_proxy_host": host, "http_proxy_port": str(port)}
+    if p.username and p.password:
+        kw["http_proxy_auth"] = (p.username, p.password)
+    return kw
 
 def _patched_start_websocket(self, timeout=20):
     _gv.check_websocket_if_connect = None
     _gv.check_websocket_if_error = False
     _gv.websocket_error_reason = None
     self.websocket_client = _WSC(self)
+    ws_kwargs = {"sslopt": {"check_hostname": False, "cert_reqs": _ssl.CERT_NONE, "ca_certs": "cacert.pem"}}
+    ws_kwargs.update(_ws_proxy_kwargs())
     self.websocket_thread = _threading.Thread(
         target=self.websocket.run_forever,
-        kwargs={"sslopt": {"check_hostname": False, "cert_reqs": _ssl.CERT_NONE, "ca_certs": "cacert.pem"}},
+        kwargs=ws_kwargs,
     )
     self.websocket_thread.daemon = True
     self.websocket_thread.start()
@@ -73,6 +91,42 @@ def _patched_start_websocket(self, timeout=20):
             return False, f"WebSocket connection timed out ({timeout}s)"
 
 _IQOptionAPI.start_websocket = _patched_start_websocket
+
+# 3. Pass proxy to IQOptionAPI for HTTP login requests
+_orig_iq_init = IQ_Option.__init__
+
+def _patched_iq_init(self, email, password):
+    _orig_iq_init(self, email, password)
+    self._proxies = None
+    if config.IQ_PROXY:
+        self._proxies = {"http": config.IQ_PROXY, "https": config.IQ_PROXY}
+
+IQ_Option.__init__ = _patched_iq_init
+
+_orig_iq_connect = IQ_Option.connect
+
+def _patched_iq_connect(self):
+    # Create the API instance the same way the original does, but with proxies
+    try:
+        self.api.close()
+    except Exception:
+        pass
+    from iqoptionapi.api import IQOptionAPI as _API
+    self.api = _API("iqoption.com", self.email, self.password, proxies=self._proxies)
+    self.api.set_session(headers=self.SESSION_HEADER, cookies=self.SESSION_COOKIE)
+    check, reason = self.api.connect()
+    if check:
+        # re-subscribe candle streams after reconnect
+        for ac in self.subscribe_candle:
+            self.api.get_candles(ac)
+        for ac in self.subscribe_candle_all_size:
+            self.start_candles_stream(ac)
+        if self.thread is not None:
+            self.start_balances_stream()
+        return True
+    return False
+
+IQ_Option.connect = _patched_iq_connect
 
 
 def _connect_with_timeout(connect_fn, timeout=30):
