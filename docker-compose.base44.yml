@@ -19,7 +19,6 @@ services:
       - /run/base44/app.env
     environment:
       - PYTHONPATH=/deps
-      - ACCOUNT_TYPE=PRACTICE
     command: sh bot_runner.sh
     restart: unless-stopped
     depends_on:
