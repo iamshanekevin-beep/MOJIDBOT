@@ -7,7 +7,7 @@ import strategy
 from broker import Broker
 from notifier import notify
 import metrics_writer
-import telegram_bot
+import telegram_bot  # TelegramController used for dashboard controls only
 
 logging.basicConfig(
     level=logging.INFO,
@@ -65,7 +65,7 @@ class RiskState:
                 self.cooldown_until = datetime.now(timezone.utc) + timedelta(minutes=config.COOLDOWN_MINUTES)
                 log.warning("Hit %d consecutive losses — %d-minute cooldown started. Bot keeps hunting.",
                            config.MAX_CONSECUTIVE_LOSSES, config.COOLDOWN_MINUTES)
-                telegram_bot.send_cooldown_card(config.MAX_CONSECUTIVE_LOSSES, config.COOLDOWN_MINUTES)
+
 
 
 def main():
@@ -105,11 +105,8 @@ def main():
     metrics["max_consecutive_losses"] = config.MAX_CONSECUTIVE_LOSSES
     metrics_writer.write_metrics(metrics)
 
-    # Start Telegram command controller
+    # Dashboard command controller (no Telegram polling)
     tg = telegram_bot.TelegramController(broker, risk, metrics)
-    tg.start()
-    log.info("Telegram listener started, sending startup message...")
-    telegram_bot.send_started()
     log.info("Startup complete. Entering main loop.")
 
     # Track active (non-blocking) trades so multiple pairs can trade concurrently
@@ -227,8 +224,6 @@ def main():
 
                 log.info("Signal: %s | pair=%s | %s", direction, pair, _summarize(info))
 
-                # Telegram styled signal card
-                telegram_bot.send_signal_card(direction, pair, info)
 
                 if not config.AUTO_TRADE:
                     metrics_writer.write_metrics(metrics)
@@ -355,7 +350,6 @@ def _resolve_pending(broker, risk, metrics, pending_trades, tg):
         else:
             log.info("Trade result unknown: %s pair=%s order_id=%s", direction, pair, order_id)
 
-        telegram_bot.send_trade_card(direction, pair, config.TRADE_AMOUNT, result, profit)
 
         # Update the trade entry in metrics with the final result
         order_id_str = str(order_id)

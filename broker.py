@@ -316,13 +316,15 @@ class Broker:
             return False, f"digital spot buy failed: {e}"
 
     def start_mood_streams(self, pairs):
-        """Subscribe to trader-sentiment streams for all tradeable pairs."""
-        for pair in pairs:
-            try:
-                self.api.start_mood_stream(pair)
-            except Exception:
-                pass  # mood not available for this pair — sentiment check will allow
-            time.sleep(0.1)  # brief pause between subscriptions to avoid WS flooding
+        """Subscribe to trader-sentiment streams for all tradeable pairs.
+
+        Through Tor, mood stream WebSocket subscriptions hang indefinitely
+        and concurrent attempts crash the iqoptionapi library.  Since mood
+        data is unreliable over Tor anyway, we skip subscriptions entirely —
+        get_traders_mood() returns None and the strategy allows trades
+        without sentiment confirmation.
+        """
+        log.info("Mood streams skipped (unreliable through Tor proxy).")
 
     def get_traders_mood(self, pair):
         """Return the fraction of traders going 'Higher' (0-1) or None."""

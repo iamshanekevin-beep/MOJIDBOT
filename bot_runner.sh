@@ -2,16 +2,14 @@
 # Wrapper that runs the bot and monitors it for hangs.
 # If the bot stops producing log output for STALE_TIMEOUT seconds,
 # the watchdog kills it and exits — Docker's restart policy brings it back.
-set -e
-
 STALE_TIMEOUT="${STALE_TIMEOUT:-360}"   # 6 minutes with no log = hung
-ERROR_STREAK_LIMIT="${ERROR_STREAK_LIMIT:-10}"  # too many consecutive errors = stuck
+ERROR_STREAK_LIMIT="${ERROR_STREAK_LIMIT:-15}"  # too many consecutive errors = stuck
 LOG_FILE="${BOT_LOG_FILE:-/logs/bot.log}"
 
 mkdir -p "$(dirname "$LOG_FILE")"
 
 # Start the bot in the background, writing directly to the log file.
-python -u main.py > "$LOG_FILE" 2>&1 &
+python -u main.py >> "$LOG_FILE" 2>&1 &
 BOT_PID=$!
 
 echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [WATCHDOG] Started bot (pid=$BOT_PID), stale timeout=${STALE_TIMEOUT}s, error streak limit=${ERROR_STREAK_LIMIT}" >> "$LOG_FILE"
@@ -29,7 +27,7 @@ while kill -0 "$BOT_PID" 2>/dev/null; do
             exit 1
         fi
         # Detect error loops: if the last N lines are all errors/warnings, the bot is stuck
-        ERROR_STREAK=$(tail -n "$ERROR_STREAK_LIMIT" "$LOG_FILE" 2>/dev/null | grep -c '\[ERROR\]\|\[WARNING\]')
+        ERROR_STREAK=$(tail -n "$ERROR_STREAK_LIMIT" "$LOG_FILE" 2>/dev/null | grep -c '\[ERROR\]' || true)
         if [ "$ERROR_STREAK" -ge "$ERROR_STREAK_LIMIT" ]; then
             echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) [WATCHDOG] Bot stuck in error loop (${ERROR_STREAK} consecutive errors) — killing for restart" >> "$LOG_FILE"
             kill -9 "$BOT_PID" 2>/dev/null || true
