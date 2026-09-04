@@ -245,6 +245,18 @@ td { padding: 8px 10px; border-bottom: 1px solid rgba(20,28,48,0.5); white-space
   </div>
 </div>
 
+<!-- Balance Banner -->
+<div class="section" style="display:flex;align-items:center;justify-content:space-between;padding:20px 24px;background:linear-gradient(135deg,rgba(18,24,42,0.95),rgba(12,16,28,0.95))">
+  <div>
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--muted)">Live Account Balance</div>
+    <div class="mono" id="banner-balance" style="font-size:36px;font-weight:800;margin-top:4px;color:var(--accent)">$—</div>
+  </div>
+  <div style="text-align:right">
+    <div style="font-size:11px;color:var(--muted)" id="banner-acct">DEMO</div>
+    <div style="font-size:13px;font-weight:600;margin-top:4px" id="banner-pnl">P&L: $0.00</div>
+  </div>
+</div>
+
 <!-- Controls -->
 <div class="section">
   <div class="section-title">🎛️ Control Center</div>
@@ -501,6 +513,16 @@ function updateMetrics(d) {
   var btn = document.getElementById('btn-toggle');
   if (currentRunning) { btn.textContent = '⏸ Pause Bot'; btn.className = 'btn btn-pause'; }
   else { btn.textContent = '▶ Resume Bot'; btn.className = 'btn btn-resume'; }
+
+  // Balance banner
+  document.getElementById('banner-balance').textContent = d.balance != null ? '$' + d.balance.toFixed(2) : '$ —';
+  var bannerAcct = document.getElementById('banner-acct');
+  bannerAcct.textContent = currentAccount === 'REAL' ? '🔴 LIVE ACCOUNT' : '🎯 DEMO ACCOUNT';
+  bannerAcct.style.color = currentAccount === 'REAL' ? 'var(--danger)' : 'var(--info)';
+  var bannerPnl = document.getElementById('banner-pnl');
+  var totalPnl = d.pnl_total || 0;
+  bannerPnl.textContent = 'P&L: ' + (totalPnl >= 0 ? '+' : '') + '$' + Math.abs(totalPnl).toFixed(2);
+  bannerPnl.style.color = totalPnl > 0 ? 'var(--accent)' : totalPnl < 0 ? 'var(--danger)' : 'var(--muted)';
 
   // Metric cards
   document.getElementById('m-balance').textContent = d.balance != null ? '$' + d.balance.toFixed(2) : '—';

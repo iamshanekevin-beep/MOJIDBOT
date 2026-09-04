@@ -123,8 +123,8 @@ def main():
             metrics["trades_today"] = risk.trades_today
             metrics["max_trades_per_day"] = config.MAX_TRADES_PER_DAY
             metrics["expiration_minutes"] = config.EXPIRATION_MINUTES
-            # Fetch balance every 20 cycles (~100s) to avoid API spam
-            if metrics["total_cycles"] % 20 == 0:
+            # Fetch balance on first cycle and every 20 cycles (~100s) to avoid API spam
+            if metrics["total_cycles"] == 1 or metrics["total_cycles"] % 20 == 0:
                 bal = broker.get_balance()
                 if bal is not None:
                     metrics["balance"] = round(bal, 2)
