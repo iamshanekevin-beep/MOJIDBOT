@@ -1,32 +1,35 @@
 """
-MOJIDTRADEBOT — FCB Breakout + Confirmation Layer
+MOJIDTRADEBOT — FCB Breakout + Pole Position
 
-Entry trigger: clean FCB breakout on the latest 1m candle (price closes
-decisively beyond the Fractal Chaos Band with a confirming body).
+Entry trigger: clean FCB breakout — candle fully CLOSES outside the band
+(not just poking through).  Fake breakouts (poke through, close back inside)
+are detected and abandoned.
 
-Confirmation filters (all three must pass, AND-gated):
-  1. Trader Sentiment — reject if 80%+ skewed against signal direction
-  2. Fractal Chaos Band — price must be outside the band in the signal direction
-  3. Pole Position Confluence — RSI, CCI, Bollinger Bands, MA must agree
+Confirmation: Pole Position (RSI, CCI, Bollinger Bands, MA) must agree
+with the breakout direction.  If it disagrees → skip.
+
+1m candle / 1m expiry.  Scans all available pairs.  After a winning trade,
+continuation trades ride the trend until a rejection candle or PP
+disagreement.
 """
 import pandas as pd
 import config
 import indicators as ind
 
 
-# ── Entry trigger: FCB breakout ───────────────────────────────────────
-
 def fcb_breakout_signal(df):
     """Detect a clean FCB breakout on the latest closed candle.
 
-    A clean breakout requires:
+    Clean breakout requires:
       1. Previous candle closed INSIDE the bands
       2. Current candle CLOSES beyond the band (not just wicking through)
       3. Candle body confirms direction (close > open for CALL, close < open for PUT)
       4. Breakout penetration >= 20% of band width (filters weak breakouts)
 
-    Returns ("CALL", info) for an upside breakout, ("PUT", info) for a
-    downside breakout, or (None, info).
+    Fake breakout (poked through band but closed back inside) is detected
+    and rejected — the setup is abandoned, not chased.
+
+    Returns ("CALL", info), ("PUT", info), or (None, info).
     """
     if len(df) < 2:
         return None, {"reason": "not enough candles"}
@@ -39,6 +42,8 @@ def fcb_breakout_signal(df):
     prev_up = upper.iloc[-2]
     prev_low = lower.iloc[-2]
     open_price = df["open"].iloc[-1]
+    high = df["high"].iloc[-1]
+    low_wick = df["low"].iloc[-1]
 
     if pd.isna(up) or pd.isna(low) or pd.isna(prev_up) or pd.isna(prev_low):
         return None, {"reason": "bands not yet confirmed"}
@@ -46,7 +51,24 @@ def fcb_breakout_signal(df):
     was_inside = prev_low <= prev_price <= prev_up
     band_width = up - low if up > low else 0
 
-    if price > up and was_inside:
+    # ── Fake breakout detection ────────────────────────────────────
+    # Price poked through the band (high above upper or low below lower)
+    # but closed back INSIDE the bands → fake breakout, abandon.
+    if low <= price <= up:
+        if high > up:
+            return None, {"price": price, "upper_band": up, "lower_band": low,
+                          "reason": "FAKE breakout — poked above band, closed back inside"}
+        if low_wick < low:
+            return None, {"price": price, "upper_band": up, "lower_band": low,
+                          "reason": "FAKE breakout — poked below band, closed back inside"}
+        return None, {"price": price, "upper_band": up, "lower_band": low,
+                      "reason": "inside bands"}
+
+    # ── Clean breakout checks ───────────────────────────────────────
+    if price > up:
+        if not was_inside:
+            return None, {"price": price, "upper_band": up, "lower_band": low,
+                          "reason": "above band but not a clean breakout (prev not inside)"}
         if price <= open_price:
             return None, {"price": price, "upper_band": up, "lower_band": low,
                           "reason": "breakout but bearish candle body"}
@@ -55,7 +77,10 @@ def fcb_breakout_signal(df):
                           "reason": "breakout too weak (< 20% band width)"}
         return "CALL", {"price": price, "upper_band": up, "lower_band": low}
 
-    if price < low and was_inside:
+    if price < low:
+        if not was_inside:
+            return None, {"price": price, "upper_band": up, "lower_band": low,
+                          "reason": "below band but not a clean breakout (prev not inside)"}
         if price >= open_price:
             return None, {"price": price, "upper_band": up, "lower_band": low,
                           "reason": "breakout but bullish candle body"}
@@ -64,53 +89,18 @@ def fcb_breakout_signal(df):
                           "reason": "breakout too weak (< 20% band width)"}
         return "PUT", {"price": price, "upper_band": up, "lower_band": low}
 
-    if price > up:
-        return None, {"price": price, "upper_band": up, "lower_band": low,
-                      "reason": "above band but not a clean breakout"}
-    if price < low:
-        return None, {"price": price, "upper_band": up, "lower_band": low,
-                      "reason": "below band but not a clean breakout"}
     return None, {"price": price, "upper_band": up, "lower_band": low,
                   "reason": "inside bands"}
 
 
-# ── Confirmation filter 1: Trader Sentiment ───────────────────────────
-
-def check_sentiment(mood_value, direction):
-    """Reject if 80%+ of traders are against the signal direction."""
-    if mood_value is None:
-        return True, "sentiment unavailable — allowing"
-
-    pct_higher = mood_value * 100 if mood_value <= 1 else mood_value
-
-    if direction == "CALL" and pct_higher < 20:
-        return False, f"80%+ traders Lower ({pct_higher:.0f}% Higher) — rejecting"
-    if direction == "PUT" and pct_higher > 80:
-        return False, f"80%+ traders Higher ({pct_higher:.0f}% Higher) — rejecting"
-    return True, f"{pct_higher:.0f}% Higher — OK"
-
-
-# ── Confirmation filter 2: Fractal Chaos Band ────────────────────────
-
-def check_fcb(df, direction):
-    """Price must be outside the FCB band in the same direction as the signal."""
-    upper, lower = ind.fractal_chaos_bands(df, period=config.FCB_FRACTAL_PERIOD)
-    price = df["close"].iloc[-1]
-    up, low = upper.iloc[-1], lower.iloc[-1]
-    if pd.isna(up) or pd.isna(low):
-        return False, "FCB bands not confirmed"
-
-    if direction == "CALL" and price > up:
-        return True, f"price {price:.5f} above upper band {up:.5f}"
-    if direction == "PUT" and price < low:
-        return True, f"price {price:.5f} below lower band {low:.5f}"
-    return False, f"price {price:.5f} inside bands [{low:.5f}, {up:.5f}]"
-
-
-# ── Confirmation filter 3: Pole Position Confluence ────────────────────
-
 def check_pole_position(df, direction):
-    """RSI, CCI, Bollinger Bands, and MA must all agree with the signal direction."""
+    """RSI, CCI, Bollinger Bands, and MA must all agree with the signal direction.
+
+    - RSI and CCI must not contradict signal direction (no overbought on CALL,
+      no oversold on PUT, no bearish CCI on CALL, no bullish CCI on PUT)
+    - Price must not be pinned at the outer Bollinger Band against the signal
+    - Moving Average (EMA fast vs slow) trend must agree with signal direction
+    """
     close = df["close"]
     price = close.iloc[-1]
     reasons = []
@@ -149,10 +139,8 @@ def check_pole_position(df, direction):
     return True, "all indicators aligned"
 
 
-# ── Combined signal ───────────────────────────────────────────────────
-
 def get_signal(df, mood_value=None):
-    """FCB breakout trigger + all three confirmation filters (AND-gated).
+    """FCB breakout trigger + Pole Position confirmation (AND-gated).
 
     Returns (direction, info_dict) where direction is "CALL", "PUT", or None.
     """
@@ -162,21 +150,7 @@ def get_signal(df, mood_value=None):
 
     info = {"breakout": breakout_info}
 
-    # Filter 1 — Trader Sentiment
-    ok, msg = check_sentiment(mood_value, direction)
-    info["sentiment"] = msg
-    if not ok:
-        info["reason"] = f"sentiment: {msg}"
-        return None, info
-
-    # Filter 2 — Fractal Chaos Band
-    ok, msg = check_fcb(df, direction)
-    info["fcb"] = msg
-    if not ok:
-        info["reason"] = f"FCB: {msg}"
-        return None, info
-
-    # Filter 3 — Pole Position Confluence
+    # Pole Position confirmation
     ok, msg = check_pole_position(df, direction)
     info["pole_position"] = msg
     if not ok:
