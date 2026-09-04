@@ -49,9 +49,14 @@ def wick_rejection_signal(df):
 # ── Confirmation filter 1: Trader Sentiment ───────────────────────────
 
 def check_sentiment(mood_value, direction):
-    """Reject if 80%+ of traders are against the signal direction."""
+    """Reject if 80%+ of traders are against the signal direction.
+
+    If mood data is unavailable (None), the trade is REJECTED — all three
+    confirmation filters must pass, and we cannot confirm sentiment without
+    data.
+    """
     if mood_value is None:
-        return True, "sentiment unavailable — allowing"
+        return False, "sentiment unavailable — cannot confirm"
 
     # mood_value is the fraction of traders going "Higher" (0-1)
     pct_higher = mood_value * 100 if mood_value <= 1 else mood_value

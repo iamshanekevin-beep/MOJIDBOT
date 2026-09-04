@@ -318,16 +318,45 @@ class Broker:
     def start_mood_streams(self, pairs):
         """Subscribe to trader-sentiment streams for all tradeable pairs.
 
-        Through Tor, mood stream WebSocket subscriptions hang indefinitely
-        and concurrent attempts crash the iqoptionapi library.  Since mood
-        data is unreliable over Tor anyway, we skip subscriptions entirely —
-        get_traders_mood() returns None and the strategy allows trades
-        without sentiment confirmation.
+        The iqoptionapi start_mood_stream() has an unbounded while-True loop
+        that hangs forever if the WebSocket subscription fails (common through
+        Tor).  We run each subscription in a daemon thread with a short timeout
+        so one failing pair can't block startup.  Pairs that fail to subscribe
+        simply won't have mood data — the strategy's sentiment filter will
+        reject trades on those pairs (all three filters must pass).
         """
-        log.info("Mood streams skipped (unreliable through Tor proxy).")
+        self.mood_subscribed = set()
+        for pair in pairs:
+            ok = self._subscribe_mood_with_timeout(pair, timeout=15)
+            if ok:
+                self.mood_subscribed.add(pair)
+        log.info("Mood streams: %d/%d pairs subscribed (%s)",
+                 len(self.mood_subscribed), len(pairs),
+                 ", ".join(sorted(self.mood_subscribed)) if self.mood_subscribed else "none")
+
+    def _subscribe_mood_with_timeout(self, pair, timeout=15):
+        """Try to subscribe to one pair's mood stream with a timeout."""
+        result = [False]
+
+        def _subscribe():
+            try:
+                self.api.start_mood_stream(pair)
+                result[0] = True
+            except Exception as e:
+                log.debug("Mood subscribe failed for %s: %s", pair, e)
+
+        t = threading.Thread(target=_subscribe, daemon=True)
+        t.start()
+        t.join(timeout=timeout)
+        if t.is_alive():
+            log.debug("Mood subscribe timed out for %s (%ds)", pair, timeout)
+            return False
+        return result[0]
 
     def get_traders_mood(self, pair):
         """Return the fraction of traders going 'Higher' (0-1) or None."""
+        if pair not in getattr(self, "mood_subscribed", set()):
+            return None
         try:
             return self.api.get_traders_mood(pair)
         except Exception:
