@@ -61,7 +61,9 @@ def _ws_proxy_kwargs():
     scheme = p.scheme or "http"
     host = p.hostname
     port = p.port or (1080 if "socks" in scheme else 8080)
-    kw = {"http_proxy_host": host, "http_proxy_port": str(port)}
+    kw = {"http_proxy_host": host, "http_proxy_port": port}
+    if "socks" in scheme:
+        kw["proxy_type"] = "socks5"
     if p.username and p.password:
         kw["http_proxy_auth"] = (p.username, p.password)
     return kw
