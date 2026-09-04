@@ -28,28 +28,49 @@ import indicators as ind
 # ── Rule 1: Candle Close Test ────────────────────────────────────────
 
 def fcb_close_breakout(df):
-    """Last candle must CLOSE fully outside the FCB band.
+    """Last candle must CLOSE fully outside the FCB band — and it must be a
+    FRESH breakout: the previous candle must have closed INSIDE the bands.
 
-    Returns ("CALL", info) if close > upper band,
-            ("PUT", info) if close < lower band,
-            (None, info) if close is inside the bands.
+    If the previous candle was also outside, this is a stale breakout (the
+    setup is already dead) → NO TRADE.
+
+    Returns ("CALL", info) if fresh close above upper band,
+            ("PUT", info) if fresh close below lower band,
+            (None, info) otherwise.
     """
-    if len(df) < 2:
+    if len(df) < 3:
         return None, {"reason": "not enough candles"}
 
     upper, lower = ind.fractal_chaos_bands(df, period=config.FCB_FRACTAL_PERIOD)
     close = df["close"].iloc[-1]
+    prev_close = df["close"].iloc[-2]
     up, low = upper.iloc[-1], lower.iloc[-1]
+    prev_up, prev_low = upper.iloc[-2], lower.iloc[-2]
 
-    if pd.isna(up) or pd.isna(low):
+    if pd.isna(up) or pd.isna(low) or pd.isna(prev_up) or pd.isna(prev_low):
         return None, {"reason": "FCB bands not available"}
 
-    if close > up:
+    # Current candle closes outside the band
+    broke_up = close > up
+    broke_down = close < low
+
+    if not broke_up and not broke_down:
+        return None, {"close": close, "upper_band": up, "lower_band": low,
+                      "reason": "close inside FCB bands — no breakout"}
+
+    # Previous candle must have been INSIDE the bands (fresh breakout only)
+    prev_inside = prev_low <= prev_close <= prev_up
+    if not prev_inside:
+        return None, {"close": close, "upper_band": up, "lower_band": low,
+                      "prev_close": prev_close,
+                      "reason": "stale breakout — previous candle also outside bands, not fresh"}
+
+    if broke_up:
         return "CALL", {"close": close, "upper_band": up, "lower_band": low,
-                        "reason": "close above upper FCB band"}
-    if close < low:
+                        "reason": "fresh close above upper FCB band"}
+    if broke_down:
         return "PUT", {"close": close, "upper_band": up, "lower_band": low,
-                       "reason": "close below lower FCB band"}
+                        "reason": "fresh close below lower FCB band"}
 
     return None, {"close": close, "upper_band": up, "lower_band": low,
                   "reason": "close inside FCB bands — no breakout"}
