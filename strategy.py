@@ -1,16 +1,16 @@
 """
-MOJIDTRADEBOT — FCB Breakout + Pole Position
+MOJIDTRADEBOT — FCB Breakout Entry + Pole Position Continuation
 
 Entry trigger: clean FCB breakout — candle fully CLOSES outside the band
 (not just poking through).  Fake breakouts (poke through, close back inside)
-are detected and abandoned.
+are detected and abandoned.  Entry needs ONLY the breakout — no PP gate.
 
-Confirmation: Pole Position (RSI, CCI, Bollinger Bands, MA) must agree
-with the breakout direction.  If it disagrees → skip.
+Continuation: after a winning trade, Pole Position (RSI, CCI, Bollinger
+Bands, MA) decides whether to ride the trend.  Keep opening in the same
+direction as long as PP confirms.  Stop at the first PP disagreement or
+rejection candle.
 
-1m candle / 1m expiry.  Scans all available pairs.  After a winning trade,
-continuation trades ride the trend until a rejection candle or PP
-disagreement.
+1m candle / 1m expiry.  Scans all available pairs.
 """
 import pandas as pd
 import config
@@ -140,7 +140,10 @@ def check_pole_position(df, direction):
 
 
 def get_signal(df, mood_value=None):
-    """FCB breakout trigger + Pole Position confirmation (AND-gated).
+    """FCB breakout trigger ONLY — entry fires on a clean breakout.
+
+    Pole Position is NOT checked here; it's used separately for trend
+    continuation after a winning trade (see check_pole_position).
 
     Returns (direction, info_dict) where direction is "CALL", "PUT", or None.
     """
@@ -148,14 +151,5 @@ def get_signal(df, mood_value=None):
     if direction is None:
         return None, breakout_info
 
-    info = {"breakout": breakout_info}
-
-    # Pole Position confirmation
-    ok, msg = check_pole_position(df, direction)
-    info["pole_position"] = msg
-    if not ok:
-        info["reason"] = f"PP: {msg}"
-        return None, info
-
-    info["reason"] = "confirmed"
+    info = {"breakout": breakout_info, "reason": "confirmed breakout"}
     return direction, info

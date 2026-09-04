@@ -381,8 +381,9 @@ def _resolve_pending(broker, risk, metrics, pending_trades, tg):
 
 
 def _maybe_continue(broker, risk, metrics, pending_trades, pending_pairs, tg, trade):
-    """After a winning trade, continue only on a fresh clean breakout with PP alignment.
-    Continues until a loss is encountered, PP no longer aligns, or no fresh breakout."""
+    """After a winning trade, ride the trend using Pole Position confirmation.
+    Continues in the same direction as long as PP confirms.  Stops at the
+    first PP disagreement or a rejection candle against the trend."""
     if trade["result"] != "win":
         return
     if tg.is_paused():
@@ -396,16 +397,28 @@ def _maybe_continue(broker, risk, metrics, pending_trades, pending_pairs, tg, tr
     if df_cont.empty:
         return
 
-    # Require a fresh wick rejection + all confirmations in the same direction
-    mood = broker.get_traders_mood(trade["pair"])
-    direction, info = strategy.get_signal(df_cont, mood_value=mood)
-    if direction != trade["direction"]:
-        log.info("Continuation stopped — no fresh confirmed signal for %s. pair=%s",
-                 trade["direction"], trade["pair"])
+    direction = trade["direction"]
+
+    # Check for a rejection candle against the trend
+    if len(df_cont) >= 2:
+        prev_close = df_cont["close"].iloc[-2]
+        curr_close = df_cont["close"].iloc[-1]
+        curr_open = df_cont["open"].iloc[-1]
+        if direction == "CALL" and curr_close < curr_open and curr_close < prev_close:
+            log.info("Continuation stopped — rejection candle against CALL trend. pair=%s", trade["pair"])
+            return
+        if direction == "PUT" and curr_close > curr_open and curr_close > prev_close:
+            log.info("Continuation stopped — rejection candle against PUT trend. pair=%s", trade["pair"])
+            return
+
+    # Pole Position must still confirm the same direction to continue
+    ok, msg = strategy.check_pole_position(df_cont, direction)
+    if not ok:
+        log.info("Continuation stopped — PP no longer aligns: %s. pair=%s", msg, trade["pair"])
         return
 
-    log.info("Continuation trade #%d: fresh wick rejection %s + confirmations on %s",
-              trade["continuation_count"] + 1, direction, trade["pair"])
+    log.info("Continuation trade #%d: PP confirms %s trend on %s (%s)",
+              trade["continuation_count"] + 1, direction, trade["pair"], msg)
     new_trade = _place_trade(broker, risk, metrics, direction, trade["pair"],
                               continuation_count=trade["continuation_count"] + 1)
     if new_trade:
