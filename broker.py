@@ -14,6 +14,7 @@ import ssl as _ssl
 import threading as _threading
 import time
 import time as _time
+import threading
 
 import pandas as pd
 from iqoptionapi.stable_api import IQ_Option
@@ -274,9 +275,7 @@ class Broker:
         timeframe_seconds = timeframe_seconds or config.TIMEFRAME_SECONDS
         count = count or config.CANDLE_COUNT
 
-        raw = self._call_with_retry(
-            self.api.get_candles, pair, timeframe_seconds, count, time.time()
-        )
+        raw = self._get_candles_with_timeout(pair, timeframe_seconds, count)
         if not raw:
             raise ConnectionError("get_candles returned empty/None — forcing reconnect")
         df = pd.DataFrame(raw)
@@ -323,6 +322,7 @@ class Broker:
                 self.api.start_mood_stream(pair)
             except Exception:
                 pass  # mood not available for this pair — sentiment check will allow
+            time.sleep(0.1)  # brief pause between subscriptions to avoid WS flooding
 
     def get_traders_mood(self, pair):
         """Return the fraction of traders going 'Higher' (0-1) or None."""
@@ -331,14 +331,53 @@ class Broker:
         except Exception:
             return None
 
-    def get_balance(self):
-        """Get current account balance."""
-        try:
-            self.ensure_connected()
-            return self.api.get_balance()
-        except Exception as e:
-            log.warning("Could not get balance: %s", e)
+    def _get_candles_with_timeout(self, pair, timeframe_seconds, count, timeout=30):
+        """Fetch candles with a per-call timeout so one slow pair can't block the scan."""
+        result = [None]
+        exc = [None]
+
+        def _fetch():
+            try:
+                result[0] = self._call_with_retry(
+                    self.api.get_candles, pair, timeframe_seconds, count, time.time()
+                )
+            except Exception as e:
+                exc[0] = e
+
+        t = threading.Thread(target=_fetch, daemon=True)
+        t.start()
+        t.join(timeout=timeout)
+
+        if t.is_alive():
+            log.warning("get_candles timed out for %s (%ds) — skipping", pair, timeout)
             return None
+        if exc[0]:
+            raise exc[0]
+        return result[0]
+
+    def get_balance(self, timeout=15):
+        """Get current account balance with a timeout."""
+        result = [None]
+        exc = [None]
+
+        def _fetch():
+            try:
+                self.ensure_connected()
+                result[0] = self.api.get_balance()
+            except Exception as e:
+                exc[0] = e
+
+        t = threading.Thread(target=_fetch, daemon=True)
+        t.start()
+        t.join(timeout=timeout)
+
+        if t.is_alive():
+            log.warning("get_balance timed out (%ds)", timeout)
+            return None
+        if exc[0]:
+            log.warning("Could not get balance: %s", exc[0])
+            return None
+        return result[0]
 
     def get_trade_result_by_balance(self, balance_before, amount):
         """Determine win/loss by comparing balance before and after trade."""

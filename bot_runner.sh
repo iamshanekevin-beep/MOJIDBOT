@@ -4,7 +4,7 @@
 # the watchdog kills it and exits — Docker's restart policy brings it back.
 set -e
 
-STALE_TIMEOUT="${STALE_TIMEOUT:-180}"   # 3 minutes with no log = hung
+STALE_TIMEOUT="${STALE_TIMEOUT:-360}"   # 6 minutes with no log = hung
 ERROR_STREAK_LIMIT="${ERROR_STREAK_LIMIT:-10}"  # too many consecutive errors = stuck
 LOG_FILE="${BOT_LOG_FILE:-/logs/bot.log}"
 

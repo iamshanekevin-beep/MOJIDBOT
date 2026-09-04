@@ -89,7 +89,9 @@ def main():
 
     pairs = broker.get_available_pairs()
     log.info("Scanning %d pairs: %s", len(pairs), ", ".join(pairs))
+    log.info("Subscribing to mood streams...")
     broker.start_mood_streams(pairs)
+    log.info("Mood streams done.")
     last_candle_ts = {}  # pair -> last processed candle timestamp
     warming_up = True  # first scan cycle observes only — no blind trades
 
@@ -106,7 +108,9 @@ def main():
     # Start Telegram command controller
     tg = telegram_bot.TelegramController(broker, risk, metrics)
     tg.start()
+    log.info("Telegram listener started, sending startup message...")
     telegram_bot.send_started()
+    log.info("Startup complete. Entering main loop.")
 
     # Track active (non-blocking) trades so multiple pairs can trade concurrently
     pending_trades = []   # list of pending-trade dicts
@@ -182,6 +186,7 @@ def main():
             for pair in pairs:
                 df = broker.get_candles_df(pair=pair)
                 if df.empty:
+                    log.info("No data. pair=%s — skipped", pair)
                     continue
 
                 latest_ts = df["timestamp"].iloc[-1]
