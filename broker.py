@@ -92,41 +92,16 @@ def _patched_start_websocket(self, timeout=20):
 
 _IQOptionAPI.start_websocket = _patched_start_websocket
 
-# 3. Pass proxy to IQOptionAPI for HTTP login requests
-_orig_iq_init = IQ_Option.__init__
+# 3. Pass proxy to IQOptionAPI for HTTP login requests — patch __init__
+#    so IQ_Option.connect() works unchanged and still returns (check, reason).
+_orig_api_init = _IQOptionAPI.__init__
 
-def _patched_iq_init(self, email, password):
-    _orig_iq_init(self, email, password)
-    self._proxies = None
-    if config.IQ_PROXY:
-        self._proxies = {"http": config.IQ_PROXY, "https": config.IQ_PROXY}
+def _patched_api_init(self, host, username, password, proxies=None):
+    if proxies is None and config.IQ_PROXY:
+        proxies = {"http": config.IQ_PROXY, "https": config.IQ_PROXY}
+    _orig_api_init(self, host, username, password, proxies)
 
-IQ_Option.__init__ = _patched_iq_init
-
-_orig_iq_connect = IQ_Option.connect
-
-def _patched_iq_connect(self):
-    # Create the API instance the same way the original does, but with proxies
-    try:
-        self.api.close()
-    except Exception:
-        pass
-    from iqoptionapi.api import IQOptionAPI as _API
-    self.api = _API("iqoption.com", self.email, self.password, proxies=self._proxies)
-    self.api.set_session(headers=self.SESSION_HEADER, cookies=self.SESSION_COOKIE)
-    check, reason = self.api.connect()
-    if check:
-        # re-subscribe candle streams after reconnect
-        for ac in self.subscribe_candle:
-            self.api.get_candles(ac)
-        for ac in self.subscribe_candle_all_size:
-            self.start_candles_stream(ac)
-        if self.thread is not None:
-            self.start_balances_stream()
-        return True
-    return False
-
-IQ_Option.connect = _patched_iq_connect
+_IQOptionAPI.__init__ = _patched_api_init
 
 
 def _connect_with_timeout(connect_fn, timeout=30):
