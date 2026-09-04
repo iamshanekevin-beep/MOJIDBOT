@@ -143,6 +143,10 @@ def main():
             # Check dashboard controls every cycle (pause, account, stake, force scan)
             tg.check_dashboard_control()
 
+            # Sync account type + stake to metrics every cycle (not just on signals)
+            metrics["account_type"] = config.ACCOUNT_TYPE
+            metrics["trade_amount"] = config.TRADE_AMOUNT
+
             # Check if account switch requested via Telegram or dashboard
             if tg.check_reconnect():
                 log.info("Account switch requested — reconnecting...")
