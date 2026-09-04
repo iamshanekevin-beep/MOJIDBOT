@@ -32,7 +32,7 @@ IQ_PROXY = os.getenv("IQ_PROXY", "")  # e.g. http://user:pass@host:port or socks
 # --- Market / instrument ---
 PAIR = os.getenv("PAIR", "EURUSD-OTC")
 PAIRS = os.getenv("PAIRS", "EURUSD-OTC,GBPUSD-OTC,USDJPY-OTC,USDCHF-OTC,EURGBP-OTC")
-TIMEFRAME_SECONDS = _get_int("TIMEFRAME_SECONDS", 60)     # candle size, e.g. 60 = M1
+TIMEFRAME_SECONDS = _get_int("TIMEFRAME_SECONDS", 5)      # candle size in seconds, e.g. 5 = S5
 CANDLE_COUNT = _get_int("CANDLE_COUNT", 100)              # how many candles to pull each cycle
 EXPIRATION_MINUTES = _get_int("EXPIRATION_MINUTES", 1)    # trade expiry
 
@@ -73,4 +73,4 @@ MAX_CONTINUATION_TRADES = _get_int("MAX_CONTINUATION_TRADES", 3)
 
 # --- Behavior ---
 AUTO_TRADE = _get_bool("AUTO_TRADE", True)   # False = log signals only, no orders placed
-POLL_SECONDS = _get_int("POLL_SECONDS", 5)   # how often to check for a new closed candle
+POLL_SECONDS = _get_int("POLL_SECONDS", 2)   # how often to check for a new closed candle
