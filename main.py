@@ -199,9 +199,8 @@ def main():
                 if warming_up:
                     continue
 
-                # ── Wick rejection + confirmation layer (all pairs, 1m) ──
-                mood = broker.get_traders_mood(pair)
-                direction, info = strategy.get_signal(df, mood_value=mood)
+                # ── FCB close breakout + Pole Position (all pairs, 1m) ──
+                direction, info = strategy.get_signal(df)
                 if direction is None:
                     metrics["no_signal_count"] += 1
                     log.info("No signal. pair=%s %s", pair, _summarize(info))
@@ -385,9 +384,8 @@ def _resolve_pending(broker, risk, metrics, pending_trades, tg):
 
 
 def _maybe_continue(broker, risk, metrics, pending_trades, pending_pairs, tg, trade):
-    """After a winning trade, ride the trend using Pole Position confirmation.
-    Continues in the same direction as long as PP confirms.  Stops at the
-    first PP disagreement or a rejection candle against the trend."""
+    """After a winning trade, keep entering in the same direction while each
+    new candle closes in that direction.  Stop when a candle closes opposite."""
     if trade["result"] != "win":
         return
     if tg.is_paused():
@@ -403,26 +401,13 @@ def _maybe_continue(broker, risk, metrics, pending_trades, pending_pairs, tg, tr
 
     direction = trade["direction"]
 
-    # Check for a rejection candle against the trend
-    if len(df_cont) >= 2:
-        prev_close = df_cont["close"].iloc[-2]
-        curr_close = df_cont["close"].iloc[-1]
-        curr_open = df_cont["open"].iloc[-1]
-        if direction == "CALL" and curr_close < curr_open and curr_close < prev_close:
-            log.info("Continuation stopped — rejection candle against CALL trend. pair=%s", trade["pair"])
-            return
-        if direction == "PUT" and curr_close > curr_open and curr_close > prev_close:
-            log.info("Continuation stopped — rejection candle against PUT trend. pair=%s", trade["pair"])
-            return
-
-    # Pole Position must still confirm the same direction to continue
-    ok, msg = strategy.check_pole_position(df_cont, direction)
-    if not ok:
-        log.info("Continuation stopped — PP no longer aligns: %s. pair=%s", msg, trade["pair"])
+    # Keep going only while the latest candle closed in the same direction
+    if not strategy.should_continue(df_cont, direction):
+        log.info("Continuation stopped — candle closed opposite to %s trend. pair=%s", direction, trade["pair"])
         return
 
-    log.info("Continuation trade #%d: PP confirms %s trend on %s (%s)",
-              trade["continuation_count"] + 1, direction, trade["pair"], msg)
+    log.info("Continuation trade #%d: %s trend still active on %s",
+              trade["continuation_count"] + 1, direction, trade["pair"])
     new_trade = _place_trade(broker, risk, metrics, direction, trade["pair"],
                               continuation_count=trade["continuation_count"] + 1)
     if new_trade:

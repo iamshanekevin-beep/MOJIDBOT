@@ -1,155 +1,122 @@
 """
-MOJIDTRADEBOT — Wick Rejection + Confirmation Layer
+MOJIDTRADEBOT — FCB Close Breakout + Pole Position
 
-Entry trigger: wick rejection on the latest 1m candle (unchanged).
-Confirmation filters (all three must pass, AND-gated):
-  1. Trader Sentiment — reject if 80%+ skewed against signal direction
-  2. Fractal Chaos Band — price must be outside the band in the signal direction
-  3. Pole Position Confluence — RSI, CCI, Bollinger Bands, MA must agree
+ENTRY — ALL 3 must be true, no exceptions:
+1. CANDLE CLOSE TEST — last candle CLOSED fully above upper FCB band (UP)
+   or fully below lower FCB band (DOWN). Not wick, not touch — CLOSE.
+   Close inside the bands = NO TRADE.
+2. NEXT CANDLE ONLY — enter on the candle immediately AFTER the breakout
+   candle.  The bot detects the breakout on the just-closed candle and
+   places a 1-minute trade — that IS the next candle.
+3. POLE POSITION MATCH — all 4 must agree with direction:
+   RSI:   above 50 for UP, below 50 for DOWN
+   CCI:   above 0 for UP,  below 0 for DOWN
+   MA:    price above MA for UP, price below MA for DOWN
+   BB:    price not touching the OPPOSITE outer band
+   If even ONE disagrees → NO TRADE.
+
+EXIT / STOP CONTINUING:
+   Keep entering next candles in the same direction ONLY while each new
+   candle keeps closing in that direction.  The moment a candle CLOSES
+   in the opposite direction → stop, flat, wait for a new Rule 1 signal.
 """
 import pandas as pd
 import config
 import indicators as ind
 
 
-# ── Entry trigger ─────────────────────────────────────────────────────
+# ── Rule 1: Candle Close Test ────────────────────────────────────────
 
-def wick_rejection_signal(df):
-    """Detect wick rejection on the latest closed candle.
+def fcb_close_breakout(df):
+    """Last candle must CLOSE fully outside the FCB band.
 
-    Returns ("CALL", info) for a lower-wick rejection (bullish),
-    ("PUT", info) for an upper-wick rejection (bearish), or (None, info).
+    Returns ("CALL", info) if close > upper band,
+            ("PUT", info) if close < lower band,
+            (None, info) if close is inside the bands.
     """
     if len(df) < 2:
         return None, {"reason": "not enough candles"}
 
-    c = df.iloc[-1]
-    open_p, close, high, low = c["open"], c["close"], c["high"], c["low"]
-    body = abs(close - open_p)
-    lower_wick = min(open_p, close) - low
-    upper_wick = high - max(open_p, close)
-    rng = high - low
-    if rng == 0:
-        return None, {"reason": "zero-range candle"}
-
-    # Lower wick rejection → CALL (Higher)
-    if lower_wick > body * 2 and lower_wick >= 0.4 * rng and close > (high + low) / 2:
-        return "CALL", {"wick": "lower", "body": body, "lower_wick": lower_wick,
-                        "upper_wick": upper_wick, "range": rng}
-
-    # Upper wick rejection → PUT (Lower)
-    if upper_wick > body * 2 and upper_wick >= 0.4 * rng and close < (high + low) / 2:
-        return "PUT", {"wick": "upper", "body": body, "lower_wick": lower_wick,
-                       "upper_wick": upper_wick, "range": rng}
-
-    return None, {"reason": "no wick rejection", "body": body,
-                  "lower_wick": lower_wick, "upper_wick": upper_wick}
-
-
-# ── Confirmation filter 1: Trader Sentiment ───────────────────────────
-
-def check_sentiment(mood_value, direction):
-    """Reject if 80%+ of traders are against the signal direction."""
-    if mood_value is None:
-        return True, "sentiment unavailable — allowing"
-
-    # mood_value is the fraction of traders going "Higher" (0-1)
-    pct_higher = mood_value * 100 if mood_value <= 1 else mood_value
-
-    if direction == "CALL" and pct_higher < 20:
-        return False, f"80%+ traders Lower ({pct_higher:.0f}% Higher) — rejecting"
-    if direction == "PUT" and pct_higher > 80:
-        return False, f"80%+ traders Higher ({pct_higher:.0f}% Higher) — rejecting"
-    return True, f"{pct_higher:.0f}% Higher — OK"
-
-
-# ── Confirmation filter 2: Fractal Chaos Band ────────────────────────
-
-def check_fcb(df, direction):
-    """Price must be outside the FCB band in the same direction as the signal."""
     upper, lower = ind.fractal_chaos_bands(df, period=config.FCB_FRACTAL_PERIOD)
-    price = df["close"].iloc[-1]
+    close = df["close"].iloc[-1]
     up, low = upper.iloc[-1], lower.iloc[-1]
+
     if pd.isna(up) or pd.isna(low):
-        return False, "FCB bands not confirmed"
+        return None, {"reason": "FCB bands not available"}
 
-    if direction == "CALL" and price > up:
-        return True, f"price {price:.5f} above upper band {up:.5f}"
-    if direction == "PUT" and price < low:
-        return True, f"price {price:.5f} below lower band {low:.5f}"
-    return False, f"price {price:.5f} inside bands [{low:.5f}, {up:.5f}]"
+    if close > up:
+        return "CALL", {"close": close, "upper_band": up, "lower_band": low,
+                        "reason": "close above upper FCB band"}
+    if close < low:
+        return "PUT", {"close": close, "upper_band": up, "lower_band": low,
+                       "reason": "close below lower FCB band"}
+
+    return None, {"close": close, "upper_band": up, "lower_band": low,
+                  "reason": "close inside FCB bands — no breakout"}
 
 
-# ── Confirmation filter 3: Pole Position Confluence ────────────────────
+# ── Rule 3: Pole Position Match (all 4 must agree) ───────────────────
 
 def check_pole_position(df, direction):
-    """RSI, CCI, Bollinger Bands, and MA must all agree with the signal direction."""
+    """All 4 indicators must agree with the signal direction.
+
+    RSI:   above 50 for CALL, below 50 for PUT
+    CCI:   above 0 for CALL,  below 0 for PUT
+    MA:    price above MA for CALL, price below MA for PUT
+    BB:    price not touching the OPPOSITE outer band
+    """
     close = df["close"]
     price = close.iloc[-1]
     reasons = []
 
-    # RSI — must not show exhaustion against signal
+    # RSI
     rsi_val = ind.rsi(close, config.RSI_PERIOD).iloc[-1]
-    if direction == "CALL" and rsi_val > 70:
-        reasons.append(f"RSI overbought ({rsi_val:.1f})")
-    elif direction == "PUT" and rsi_val < 30:
-        reasons.append(f"RSI oversold ({rsi_val:.1f})")
+    if direction == "CALL" and rsi_val <= 50:
+        reasons.append(f"RSI {rsi_val:.1f} <= 50")
+    elif direction == "PUT" and rsi_val >= 50:
+        reasons.append(f"RSI {rsi_val:.1f} >= 50")
 
-    # CCI — must not contradict signal direction
+    # CCI
     cci_val = ind.cci(df, config.CCI_PERIOD).iloc[-1]
-    if direction == "CALL" and cci_val < -100:
-        reasons.append(f"CCI bearish ({cci_val:.1f})")
-    elif direction == "PUT" and cci_val > 100:
-        reasons.append(f"CCI bullish ({cci_val:.1f})")
+    if direction == "CALL" and cci_val <= 0:
+        reasons.append(f"CCI {cci_val:.1f} <= 0")
+    elif direction == "PUT" and cci_val >= 0:
+        reasons.append(f"CCI {cci_val:.1f} >= 0")
 
-    # Bollinger Bands — price must not be pinned at the outer BB against signal
+    # MA (EMA)
+    ma_val = ind.ema(close, config.EMA_FAST).iloc[-1]
+    if direction == "CALL" and price <= ma_val:
+        reasons.append(f"price {price:.5f} <= MA {ma_val:.5f}")
+    elif direction == "PUT" and price >= ma_val:
+        reasons.append(f"price {price:.5f} >= MA {ma_val:.5f}")
+
+    # Bollinger — price must not touch the OPPOSITE outer band
     bb_upper, bb_mid, bb_lower = ind.bollinger_bands(close, config.BB_PERIOD, config.BB_STD)
     if direction == "CALL" and price <= bb_lower.iloc[-1]:
-        reasons.append("price pinned at lower BB")
+        reasons.append(f"price touching lower BB {bb_lower.iloc[-1]:.5f}")
     elif direction == "PUT" and price >= bb_upper.iloc[-1]:
-        reasons.append("price pinned at upper BB")
-
-    # Moving Average — trend must agree
-    ema_fast = ind.ema(close, config.EMA_FAST).iloc[-1]
-    ema_slow = ind.ema(close, config.EMA_SLOW).iloc[-1]
-    if direction == "CALL" and ema_fast <= ema_slow:
-        reasons.append(f"EMA bearish (fast {ema_fast:.5f} <= slow {ema_slow:.5f})")
-    elif direction == "PUT" and ema_fast >= ema_slow:
-        reasons.append(f"EMA bullish (fast {ema_fast:.5f} >= slow {ema_slow:.5f})")
+        reasons.append(f"price touching upper BB {bb_upper.iloc[-1]:.5f}")
 
     if reasons:
         return False, "; ".join(reasons)
-    return True, "all indicators aligned"
+    return True, "all 4 indicators aligned"
 
 
-# ── Combined signal ───────────────────────────────────────────────────
+# ── Combined signal (Rules 1 + 3, AND-gated) ──────────────────────────
 
 def get_signal(df, mood_value=None):
-    """Wick rejection trigger + all three confirmation filters (AND-gated).
+    """Rule 1 (FCB close breakout) AND Rule 3 (Pole Position all 4 agree).
 
     Returns (direction, info_dict) where direction is "CALL", "PUT", or None.
     """
-    direction, wick_info = wick_rejection_signal(df)
+    # Rule 1 — FCB close breakout
+    direction, breakout_info = fcb_close_breakout(df)
     if direction is None:
-        return None, wick_info
+        return None, breakout_info
 
-    info = {"wick_rejection": wick_info}
+    info = {"breakout": breakout_info}
 
-    # Filter 1 — Trader Sentiment
-    ok, msg = check_sentiment(mood_value, direction)
-    info["sentiment"] = msg
-    if not ok:
-        info["reason"] = f"sentiment: {msg}"
-        return None, info
-
-    # Filter 2 — Fractal Chaos Band
-    ok, msg = check_fcb(df, direction)
-    info["fcb"] = msg
-    if not ok:
-        info["reason"] = f"FCB: {msg}"
-        return None, info
-
-    # Filter 3 — Pole Position Confluence
+    # Rule 3 — Pole Position (all 4 must agree)
     ok, msg = check_pole_position(df, direction)
     info["pole_position"] = msg
     if not ok:
@@ -158,3 +125,23 @@ def get_signal(df, mood_value=None):
 
     info["reason"] = "confirmed"
     return direction, info
+
+
+# ── Continuation check (used by main.py after a winning trade) ────────
+
+def should_continue(df, direction):
+    """Keep entering same direction while each new candle closes in that
+    direction.  Stop when a candle CLOSES in the opposite direction.
+
+    Returns True if the latest candle closed in the same direction.
+    """
+    if len(df) < 1:
+        return False
+
+    c = df.iloc[-1]
+    close, open_p = c["close"], c["open"]
+
+    if direction == "CALL":
+        return close > open_p   # bullish candle — keep going UP
+    else:
+        return close < open_p    # bearish candle — keep going DOWN
