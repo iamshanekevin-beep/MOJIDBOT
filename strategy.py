@@ -1,7 +1,9 @@
 """
-MOJIDTRADEBOT — Wick Rejection + Confirmation Layer
+MOJIDTRADEBOT — FCB Breakout + Confirmation Layer
 
-Entry trigger: wick rejection on the latest 1m candle (unchanged).
+Entry trigger: clean FCB breakout on the latest 1m candle (price closes
+decisively beyond the Fractal Chaos Band with a confirming body).
+
 Confirmation filters (all three must pass, AND-gated):
   1. Trader Sentiment — reject if 80%+ skewed against signal direction
   2. Fractal Chaos Band — price must be outside the band in the signal direction
@@ -12,38 +14,64 @@ import config
 import indicators as ind
 
 
-# ── Entry trigger ─────────────────────────────────────────────────────
+# ── Entry trigger: FCB breakout ───────────────────────────────────────
 
-def wick_rejection_signal(df):
-    """Detect wick rejection on the latest closed candle.
+def fcb_breakout_signal(df):
+    """Detect a clean FCB breakout on the latest closed candle.
 
-    Returns ("CALL", info) for a lower-wick rejection (bullish),
-    ("PUT", info) for an upper-wick rejection (bearish), or (None, info).
+    A clean breakout requires:
+      1. Previous candle closed INSIDE the bands
+      2. Current candle CLOSES beyond the band (not just wicking through)
+      3. Candle body confirms direction (close > open for CALL, close < open for PUT)
+      4. Breakout penetration >= 20% of band width (filters weak breakouts)
+
+    Returns ("CALL", info) for an upside breakout, ("PUT", info) for a
+    downside breakout, or (None, info).
     """
     if len(df) < 2:
         return None, {"reason": "not enough candles"}
 
-    c = df.iloc[-1]
-    open_p, close, high, low = c["open"], c["close"], c["high"], c["low"]
-    body = abs(close - open_p)
-    lower_wick = min(open_p, close) - low
-    upper_wick = high - max(open_p, close)
-    rng = high - low
-    if rng == 0:
-        return None, {"reason": "zero-range candle"}
+    upper, lower = ind.fractal_chaos_bands(df, period=config.FCB_FRACTAL_PERIOD)
+    price = df["close"].iloc[-1]
+    prev_price = df["close"].iloc[-2]
+    up = upper.iloc[-1]
+    low = lower.iloc[-1]
+    prev_up = upper.iloc[-2]
+    prev_low = lower.iloc[-2]
+    open_price = df["open"].iloc[-1]
 
-    # Lower wick rejection → CALL (Higher)
-    if lower_wick > body * 2 and lower_wick >= 0.4 * rng and close > (high + low) / 2:
-        return "CALL", {"wick": "lower", "body": body, "lower_wick": lower_wick,
-                        "upper_wick": upper_wick, "range": rng}
+    if pd.isna(up) or pd.isna(low) or pd.isna(prev_up) or pd.isna(prev_low):
+        return None, {"reason": "bands not yet confirmed"}
 
-    # Upper wick rejection → PUT (Lower)
-    if upper_wick > body * 2 and upper_wick >= 0.4 * rng and close < (high + low) / 2:
-        return "PUT", {"wick": "upper", "body": body, "lower_wick": lower_wick,
-                       "upper_wick": upper_wick, "range": rng}
+    was_inside = prev_low <= prev_price <= prev_up
+    band_width = up - low if up > low else 0
 
-    return None, {"reason": "no wick rejection", "body": body,
-                  "lower_wick": lower_wick, "upper_wick": upper_wick}
+    if price > up and was_inside:
+        if price <= open_price:
+            return None, {"price": price, "upper_band": up, "lower_band": low,
+                          "reason": "breakout but bearish candle body"}
+        if band_width > 0 and (price - up) < 0.2 * band_width:
+            return None, {"price": price, "upper_band": up, "lower_band": low,
+                          "reason": "breakout too weak (< 20% band width)"}
+        return "CALL", {"price": price, "upper_band": up, "lower_band": low}
+
+    if price < low and was_inside:
+        if price >= open_price:
+            return None, {"price": price, "upper_band": up, "lower_band": low,
+                          "reason": "breakout but bullish candle body"}
+        if band_width > 0 and (low - price) < 0.2 * band_width:
+            return None, {"price": price, "upper_band": up, "lower_band": low,
+                          "reason": "breakout too weak (< 20% band width)"}
+        return "PUT", {"price": price, "upper_band": up, "lower_band": low}
+
+    if price > up:
+        return None, {"price": price, "upper_band": up, "lower_band": low,
+                      "reason": "above band but not a clean breakout"}
+    if price < low:
+        return None, {"price": price, "upper_band": up, "lower_band": low,
+                      "reason": "below band but not a clean breakout"}
+    return None, {"price": price, "upper_band": up, "lower_band": low,
+                  "reason": "inside bands"}
 
 
 # ── Confirmation filter 1: Trader Sentiment ───────────────────────────
@@ -53,7 +81,6 @@ def check_sentiment(mood_value, direction):
     if mood_value is None:
         return True, "sentiment unavailable — allowing"
 
-    # mood_value is the fraction of traders going "Higher" (0-1)
     pct_higher = mood_value * 100 if mood_value <= 1 else mood_value
 
     if direction == "CALL" and pct_higher < 20:
@@ -125,15 +152,15 @@ def check_pole_position(df, direction):
 # ── Combined signal ───────────────────────────────────────────────────
 
 def get_signal(df, mood_value=None):
-    """Wick rejection trigger + all three confirmation filters (AND-gated).
+    """FCB breakout trigger + all three confirmation filters (AND-gated).
 
     Returns (direction, info_dict) where direction is "CALL", "PUT", or None.
     """
-    direction, wick_info = wick_rejection_signal(df)
+    direction, breakout_info = fcb_breakout_signal(df)
     if direction is None:
-        return None, wick_info
+        return None, breakout_info
 
-    info = {"wick_rejection": wick_info}
+    info = {"breakout": breakout_info}
 
     # Filter 1 — Trader Sentiment
     ok, msg = check_sentiment(mood_value, direction)

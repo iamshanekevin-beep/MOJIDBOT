@@ -422,6 +422,8 @@ def _summarize(info):
         if k in info:
             v = info[k]
             parts.append(f"{k}={v:.5f}" if isinstance(v, float) else f"{k}={v}")
+    if "breakout" in info:
+        parts.append(f"breakout={_summarize(info['breakout'])}")
     if "fcb" in info:
         parts.append(f"fcb={_summarize(info['fcb'])}")
     if "pole_position" in info:
