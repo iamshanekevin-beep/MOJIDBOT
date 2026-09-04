@@ -5,6 +5,7 @@ Serves the premium dashboard (dashboard.html) and API endpoints on port 3000.
 import http.server
 import json
 import os
+import time
 
 LOG_FILE = os.environ.get("BOT_LOG_FILE", "/logs/bot.log")
 METRICS_FILE = os.environ.get("BOT_METRICS_FILE", "/logs/metrics.json")
@@ -73,7 +74,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         body = self.rfile.read(content_length)
         try:
             data = json.loads(body)
-            data["_ts"] = data.get("_ts", 0)
+            data["_ts"] = data.get("_ts", time.time())
             with open(CONTROL_FILE, "w") as f:
                 json.dump(data, f, indent=2)
             self.send_response(200)
