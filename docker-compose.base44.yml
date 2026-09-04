@@ -1,0 +1,17 @@
+services:
+  bot:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - ./:/app
+    env_file:
+      - /run/base44/app.env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - ACCOUNT_TYPE=PRACTICE
+      - AUTO_TRADE=true
+      - STRATEGY=BOTH
+      - PAIR=EURUSD-OTC
+    command: >
+      bash -c "pip install --no-cache-dir -r requirements.txt && python main.py"
+    restart: unless-stopped

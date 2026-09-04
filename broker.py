@@ -10,6 +10,7 @@ Install: pip install iqoptionapi
 """
 import logging
 import time
+from functools import wraps
 
 import pandas as pd
 from iqoptionapi.stable_api import IQ_Option
@@ -52,6 +53,20 @@ class Broker:
         df = df.sort_values("timestamp").reset_index(drop=True)
         return df
 
+    def is_asset_open(self, pair=None):
+        """Check if the pair is currently open for trading. Returns True/False."""
+        pair = pair or config.PAIR
+        try:
+            open_times = self.api.get_all_open_time()
+            for instrument_type in ("turbo", "binary", "digital", "forex"):
+                assets = open_times.get(instrument_type, {})
+                if pair in assets and assets[pair].get("open"):
+                    return True
+            return False
+        except Exception as e:
+            log.warning("Could not check asset open time: %s — assuming open", e)
+            return True
+
     def place_trade(self, direction: str, amount=None, pair=None, expiration_minutes=None):
         """
         direction: "CALL" or "PUT"
@@ -64,21 +79,34 @@ class Broker:
 
         self.ensure_connected()
 
+        if not self.is_asset_open(pair):
+            return False, f"asset {pair} is currently suspended/closed — trade skipped"
+
         # Try binary/turbo first, fall back to digital spot if unavailable —
         # different iqoptionapi forks expose these slightly differently.
+        buy_failed_reason = None
         try:
             check, order_id = self.api.buy(amount, pair, action, expiration_minutes)
             if check:
                 return True, order_id
-            return False, f"buy() returned False: {order_id}"
+            buy_failed_reason = f"buy() returned False: {order_id}"
         except Exception as e:
-            log.warning("Classic buy() failed (%s), trying digital spot...", e)
+            buy_failed_reason = f"buy() raised: {e}"
+
+        # If the asset is suspended, don't attempt the digital spot fallback —
+        # it hangs indefinitely on suspended assets.
+        if buy_failed_reason and "suspended" in buy_failed_reason.lower():
+            return False, buy_failed_reason
+
+        log.warning("Classic buy() failed (%s), trying digital spot...", buy_failed_reason)
 
         try:
             check, order_id = self.api.buy_digital_spot(pair, amount, action, expiration_minutes)
-            return check, order_id
+            if check:
+                return True, order_id
+            return False, f"digital spot returned False: {order_id} (after {buy_failed_reason})"
         except Exception as e:
-            return False, f"digital spot buy failed: {e}"
+            return False, f"digital spot buy failed: {e} (after {buy_failed_reason})"
 
     def get_trade_result(self, order_id, timeout=5):
         """Best-effort win/loss check. Returns 'win', 'loss', 'unknown'."""
