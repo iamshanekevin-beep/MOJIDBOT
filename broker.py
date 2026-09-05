@@ -199,6 +199,10 @@ class Broker:
         log.warning("No tradeable open asset found — falling back to configured pair %s.", pair)
         return pair
 
+    def refresh_open_assets(self):
+        """Re-fetch the open-asset list from IQ Option (pairs can suspend/resume mid-session)."""
+        self._fetch_open_assets()
+
     def get_active_pair(self):
         return self.active_pair or config.PAIR
 

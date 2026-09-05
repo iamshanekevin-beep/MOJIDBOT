@@ -157,6 +157,21 @@ def main():
                 warming_up = True
                 log.info("Reconnected on %s account. Scanning %d pairs.", config.ACCOUNT_TYPE, len(pairs))
 
+            # ── Periodically refresh available pairs (pairs suspend/resume mid-session) ──
+            if metrics["total_cycles"] % 30 == 0:
+                broker.refresh_open_assets()
+                fresh = broker.get_available_pairs()
+                if set(fresh) != set(pairs):
+                    added = [p for p in fresh if p not in pairs]
+                    removed = [p for p in pairs if p not in fresh]
+                    if added:
+                        log.info("Newly available pairs: %s", ", ".join(added))
+                    if removed:
+                        log.info("No longer available pairs: %s", ", ".join(removed))
+                    pairs = fresh
+                    metrics["pairs"] = pairs
+                    metrics_writer.write_metrics(metrics)
+
             # ── Resolve expired pending trades before scanning ──────────────
             resolved = _resolve_pending(broker, risk, metrics, pending_trades, tg)
             for t in resolved:
@@ -256,10 +271,15 @@ def main():
                     continue  # keep scanning/hunting for signals
 
                 # Place trade non-blocking — keeps scanning other pairs for more signals
-                new_trade = _place_trade(broker, risk, metrics, direction, pair)
+                new_trade, err = _place_trade(broker, risk, metrics, direction, pair)
                 if new_trade:
                     pending_trades.append(new_trade)
                     pending_pairs.add(pair)
+                elif err and ("suspended" in err or "not available" in err):
+                    log.warning("Removing suspended/unavailable pair %s from scan list.", pair)
+                    pairs = [p for p in pairs if p != pair]
+                    metrics["pairs"] = pairs
+                    metrics_writer.write_metrics(metrics)
 
             if warming_up:
                 warming_up = False
@@ -290,14 +310,15 @@ WAIT_SECS = config.EXPIRATION_MINUTES * 60 + 30
 
 
 def _place_trade(broker, risk, metrics, direction, pair, continuation_count=0):
-    """Place a trade non-blocking.  Returns a pending-trade dict, or None on failure."""
+    """Place a trade non-blocking.  Returns (pending-trade dict, error_str).
+    On success error_str is None; on failure trade dict is None."""
     balance_before = broker.get_balance()
     success, order_id = broker.place_trade(direction, pair=pair)
     risk.record_trade(config.TRADE_AMOUNT)
 
     if not success:
         log.error("Trade failed: %s pair=%s", order_id, pair)
-        return None
+        return None, str(order_id)
 
     metrics["trades_placed"] += 1
     now_ts = datetime.now(timezone.utc).isoformat()
@@ -325,7 +346,7 @@ def _place_trade(broker, risk, metrics, direction, pair, continuation_count=0):
         "balance_before": balance_before,
         "expires_at": time.time() + WAIT_SECS,
         "continuation_count": continuation_count,
-    }
+    }, None
 
 
 def _resolve_pending(broker, risk, metrics, pending_trades, tg):
@@ -408,7 +429,7 @@ def _maybe_continue(broker, risk, metrics, pending_trades, pending_pairs, tg, tr
 
     log.info("Continuation trade #%d: %s trend still active on %s",
               trade["continuation_count"] + 1, direction, trade["pair"])
-    new_trade = _place_trade(broker, risk, metrics, direction, trade["pair"],
+    new_trade, err = _place_trade(broker, risk, metrics, direction, trade["pair"],
                               continuation_count=trade["continuation_count"] + 1)
     if new_trade:
         pending_trades.append(new_trade)
